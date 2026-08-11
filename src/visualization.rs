@@ -1,8 +1,10 @@
 use anyhow::{Context, Result, anyhow, bail};
 use mandrake::SceResults;
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::collections::{HashMap, HashSet};
+use std::ffi::CString;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -86,13 +88,14 @@ pub fn run_plot(
         let module = plotting_module(py)?;
         let labels = labels.unwrap_or_default();
         let labels_object = if labels.is_empty() {
-            py.None()
+            py.None().into_bound(py)
         } else {
-            labels.into_py(py)
+            labels.into_bound_py_any(py)?
         };
         let archive_object = archive_string
-            .map(|path| path.into_py(py))
-            .unwrap_or_else(|| py.None());
+            .map(|path| path.into_bound_py_any(py))
+            .transpose()?
+            .unwrap_or_else(|| py.None().into_bound(py));
         module.getattr("render_all")?.call1((
             embedding,
             names,
@@ -109,11 +112,18 @@ pub fn run_plot(
 }
 
 fn with_python<T>(call: impl for<'py> FnOnce(Python<'py>) -> PyResult<T>) -> Result<T> {
-    Python::with_gil(call).map_err(|error| anyhow!("{error}"))
+    Python::attach(call).map_err(|error| anyhow!("{error}"))
 }
 
 fn plotting_module<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> {
-    PyModule::from_code_bound(py, PLOT_CODE, "mandrake_rust_plot.py", "mandrake_rust_plot")
+    let code = CString::new(PLOT_CODE)
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("plotting source contains NUL"))?;
+    PyModule::from_code(
+        py,
+        code.as_c_str(),
+        c"mandrake_rust_plot.py",
+        c"mandrake_rust_plot",
+    )
 }
 
 fn frame_archive_path(prefix: &Path) -> PathBuf {

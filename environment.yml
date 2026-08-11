@@ -1,0 +1,12 @@
+name: mandrake.rust_py312
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - plotly
+  - matplotlib
+  - hdbscan
+  - tqdm
+  - ffmpeg>=4

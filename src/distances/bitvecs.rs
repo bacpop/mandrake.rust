@@ -1,4 +1,3 @@
-use hashbrown::HashMap;
 use roaring::RoaringBitmap;
 
 #[derive(Clone, Debug, Default)]
@@ -128,60 +127,6 @@ impl SampleBases {
     // Counts positions encoded as any non-gap base.
     pub(crate) fn non_gap_count(&self, alignment_len: usize) -> usize {
         alignment_len - self.gap.len() as usize
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct GeneMetadata {
-    name: String,
-    paralog_count: usize,
-}
-
-impl GeneMetadata {
-    pub(crate) fn new(name: String, paralog_count: usize) -> Self {
-        GeneMetadata {
-            name,
-            paralog_count,
-        }
-    }
-
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub(crate) fn paralog_count(&self) -> Option<usize> {
-        if self.paralog_count == 0 {
-            None
-        } else {
-            Some(self.paralog_count)
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ParsedGeneAlignment {
-    pub(crate) gene_index: usize,
-    pub(crate) metadata: GeneMetadata,
-    pub(crate) alignment_len: usize,
-    pub(crate) offset: u32,
-    pub(crate) sequences: HashMap<usize, SampleBases>,
-}
-
-impl ParsedGeneAlignment {
-    pub(crate) fn new(
-        gene_index: usize,
-        metadata: GeneMetadata,
-        alignment_len: usize,
-        offset: u32,
-        sequences: HashMap<usize, SampleBases>,
-    ) -> Self {
-        ParsedGeneAlignment {
-            gene_index,
-            metadata,
-            alignment_len,
-            offset,
-            sequences,
-        }
     }
 }
 

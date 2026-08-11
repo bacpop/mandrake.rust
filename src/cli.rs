@@ -38,8 +38,8 @@ struct Args {
     /// Sketch prefix (.skm/.skd) or a text file containing one FASTA path per line.
     #[arg(long, value_name = "PREFIX_OR_LIST")]
     sketches: Option<PathBuf>,
-    /// Number of neighbours to retain per sample; accepts the legacy --kNN spelling.
-    #[arg(long, visible_alias = "kNN", value_name = "N")]
+    /// Number of neighbours to retain per sample
+    #[arg(short, long, visible_alias = "kNN", value_name = "N")]
     knn: Option<usize>,
     /// Strict normalized distance threshold (not supported for sketches).
     #[arg(long, value_name = "DISTANCE")]
@@ -51,7 +51,7 @@ struct Args {
     #[arg(long, default_value = "mandrake", value_name = "PREFIX")]
     output: PathBuf,
     /// Conditional-probability perplexity; non-positive values use raw similarities.
-    #[arg(long, default_value_t = 15.0)]
+    #[arg(long, default_value_t = 30.0)]
     perplexity: f64,
     /// Maximum optimisation iterations.
     #[arg(long, default_value_t = 100_000)]

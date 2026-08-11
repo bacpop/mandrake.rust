@@ -15,9 +15,9 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 #[allow(dead_code)]
-mod gene;
+mod bitvecs;
 
-use self::gene::SampleBases;
+use self::bitvecs::SampleBases;
 
 /// A sparse distance matrix in coordinate (COO) form.
 ///
@@ -49,19 +49,6 @@ impl SparseDistances {
         }
         if names.len() < 2 {
             bail!("at least two sample names are required");
-        }
-        if rows
-            .iter()
-            .chain(&columns)
-            .any(|&index| index >= names.len() as u64)
-        {
-            bail!("COO index is outside the sample-name vector");
-        }
-        if distances
-            .iter()
-            .any(|&distance| !distance.is_finite() || !(0.0..=1.0).contains(&distance))
-        {
-            bail!("distances must be finite and normalized to [0, 1]");
         }
         Ok(Self {
             names,
