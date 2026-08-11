@@ -1,9 +1,10 @@
 use mandrake::{
-    SketchOptions, Sparsification, accessory_distances, pair_snp_distances, sketch_distances,
+    SketchOptions, Sparsification, accessory_distances, accessory_distances_from_reader,
+    pair_snp_distances, pair_snp_distances_from_reader, sketch_distances,
     sketch_distances_from_fasta_list,
 };
 use std::fs::File;
-use std::io::Write;
+use std::io::{Cursor, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -38,6 +39,23 @@ fn pair_snp_distances_are_normalized_and_keep_legacy_self_edges() {
             .all(|distance| (0.0..=1.0).contains(distance))
     );
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn reader_based_distance_constructors_accept_decompressed_bytes() {
+    let alignment = pair_snp_distances_from_reader(
+        Cursor::new(b">a\nACGT\n>b\nACGA\n"),
+        Sparsification::Knn(1),
+    )
+    .unwrap();
+    assert_eq!(alignment.n_samples(), 2);
+
+    let accessory = accessory_distances_from_reader(
+        Cursor::new(b"Gene\ta\tb\ng1\t1\t0\ng2\t1\t1\n"),
+        Sparsification::Knn(1),
+    )
+    .unwrap();
+    assert_eq!(accessory.n_samples(), 2);
 }
 
 #[test]

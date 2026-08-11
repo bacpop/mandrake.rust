@@ -1,8 +1,10 @@
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Parser};
+use indicatif::{ProgressBar, ProgressStyle};
 use mandrake::{
-    SketchOptions, SparseDistances, Sparsification, WtsneOptions, accessory_distances,
-    pair_snp_distances, sketch_distances, sketch_distances_from_fasta_list, wtsne,
+    EmbeddingInput, EmbeddingOperation, SketchOptions, SparseDistances, Sparsification,
+    WtsneOptions, accessory_distances, pair_snp_distances, sketch_distances,
+    sketch_distances_from_fasta_list,
 };
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
@@ -67,7 +69,7 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     seed: u64,
     /// Disable the progress bar.
-    #[arg(long)]
+    #[arg(long, visible_alias = "no-progress")]
     quiet: bool,
     /// K-mer size used when --sketches points to a FASTA list.
     #[arg(long, default_value_t = 21)]
@@ -77,13 +79,15 @@ struct Args {
     sketch_size: u64,
 }
 
+const CLI_ADVANCE_CHUNK: usize = 1_000;
+
 pub fn run() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
     let sparsification = parse_sparsification(&args)?;
     let distances = build_distances(&args, sparsification)?;
-
-    let weights = vec![1.0; distances.n_samples()];
+    let (names, rows, columns, values) = distances.into_parts();
+    let input = EmbeddingInput::new(rows, columns, values, names.len(), None)?;
     let options = WtsneOptions {
         perplexity: args.perplexity,
         max_iterations: args.max_iterations,
@@ -91,19 +95,32 @@ pub fn run() -> Result<()> {
         learning_rate: args.learning_rate,
         initial_exaggeration: args.initial_exaggeration,
         workers: args.workers,
-        progress: !args.quiet,
         seed: args.seed,
-        ..WtsneOptions::default()
     };
-    let results = wtsne(
-        distances.rows(),
-        distances.columns(),
-        distances.distances(),
-        &weights,
-        &options,
-    )
-    .context("running wtsne")?;
-    write_outputs(&args.output, &distances, results.embedding())?;
+    let mut operation = EmbeddingOperation::new(input, &options).context("running wtsne")?;
+    let progress = (!args.quiet).then(|| {
+        let bar = ProgressBar::new(options.max_iterations as u64);
+        let style = ProgressStyle::with_template(
+            "Optimizing [{bar:40.cyan/blue}] {pos}/{len} status={msg}",
+        )
+        .unwrap_or_else(|_| ProgressStyle::default_bar());
+        bar.set_style(style);
+        bar
+    });
+    loop {
+        let status = operation.advance(CLI_ADVANCE_CHUNK);
+        if let Some(bar) = &progress {
+            bar.set_position(status.completed_iterations() as u64);
+            bar.set_message(format!("Eq={:.6}", status.eq()));
+        }
+        if status.is_complete() {
+            break;
+        }
+    }
+    if let Some(bar) = progress {
+        bar.finish_and_clear();
+    }
+    write_outputs(&args.output, &names, operation.embedding())?;
     Ok(())
 }
 
@@ -189,11 +206,7 @@ fn read_fasta_list(path: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn write_outputs(
-    output: &Path,
-    distances: &SparseDistances,
-    embedding: &ndarray::Array2<f64>,
-) -> Result<()> {
+fn write_outputs(output: &Path, names: &[String], embedding: &ndarray::Array2<f64>) -> Result<()> {
     let embedding_path = PathBuf::from(format!("{}.embedding.txt", output.display()));
     let names_path = PathBuf::from(format!("{}.names.txt", output.display()));
     let mut embedding_file = File::create(&embedding_path)
@@ -203,7 +216,7 @@ fn write_outputs(
     }
     let mut names_file =
         File::create(&names_path).with_context(|| format!("creating {}", names_path.display()))?;
-    for name in distances.names() {
+    for name in names {
         writeln!(names_file, "{name}")?;
     }
     Ok(())

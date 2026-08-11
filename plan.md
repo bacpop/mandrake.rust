@@ -101,34 +101,31 @@ task here.
 - [x] Update the plan with the wasm/async scope and remove superseded follow-up work
 - [x] Resolve the public async API, polling contract, and lifecycle semantics
 - [x] Define wasm32-compatible execution and scheduling constraints
-- [ ] Remove retained animation-frame types and implementation
-- [ ] Implement the async, pollable embedding API
-- [ ] Add focused lifecycle, polling, and final-result coverage
-- [ ] Verify native and `wasm32-unknown-unknown` builds, focused tests, formatting, lint, documentation, and diff checks
-- [ ] Update this plan at completion with status, decisions, blockers, log, and next task
+- [x] Remove retained animation-frame types and implementation
+- [x] Implement the async, pollable embedding API
+- [x] Add focused lifecycle, polling, and final-result coverage
+- [x] Verify native and `wasm32-unknown-unknown` builds, focused tests, formatting, lint, documentation, and diff checks
+- [x] Update this plan at completion with status, decisions, blockers, log, and next task
 
 ### Current Status
 
 Working on:
 
-The wasm/async API design is complete and documented. No implementation changes
-were made during this grilling phase; the next session begins implementation.
+The wasm/async API transition is complete. The library has a synchronous,
+cooperatively advanced operation, and the wasm library build is feature-free.
 
 Last verified:
 
-2026-08-07: `cargo test --all-targets --offline` (28 tests),
+2026-08-11: `cargo test --all-targets --offline` (23 tests),
 `cargo build --all-targets --offline`, `cargo doc --no-deps --offline`,
-`cargo fmt --all`, `cargo clippy --all-targets --offline -- -D warnings`, and
-`git diff --check` pass. The online Cargo attempt was blocked by unavailable
-crates.io DNS; all required dependencies were available in the local cache.
+`cargo fmt --all`, `cargo clippy --all-targets --offline -- -D warnings`,
+`cargo clippy --lib --no-default-features --offline -- -D warnings`,
+`cargo check --lib --no-default-features --target wasm32-unknown-unknown
+--offline`, and `git diff --check` pass.
 
-Current blocker:
+Blockers:
 
-2026-08-11: `cargo check --target wasm32-unknown-unknown --offline` reaches
-native compression dependencies and fails while compiling `lzma-sys` and
-`bzip2-sys`, whose C sources require `stdlib.h`. The target is installed. The
-wasm-facing crate boundary has been designed but is not yet implemented; the
-planned feature split addresses this blocker.
+None.
 
 ---
 
@@ -335,10 +332,9 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-Implement the confirmed wasm/async API: introduce owned `EmbeddingInput` and
-cooperative `EmbeddingOperation`, remove retained frame results, split and
-feature-gate distance inputs, preserve native CLI progress rendering, and add
-focused lifecycle tests.
+Start the planned worker-model cleanup: replace explicit logical workers with
+parallel updates in the main loop, retain a single cross-platform thread
+setting, and reassess the atomic update seam.
 
 # Further tasks
 
@@ -502,3 +498,34 @@ Next session:
 Blockers:
 - No unresolved design blockers. The known wasm dependency failure is an
   implementation task addressed by the agreed feature split.
+
+## 2026-08-11 (wasm/async API implementation)
+
+Completed:
+- Replaced `FrameSchedule`, `SceFrame`, and `SceResults` with owned
+  `EmbeddingInput`, `EmbeddingOperation`, and `EmbeddingProgress`. The
+  blocking `wtsne` wrapper now returns only its final `Array2<f64>`.
+- Implemented synchronous, budgeted operation advancement with an initial
+  pollable embedding, one retained current array, idempotent completion,
+  partial-result warning logging, and no retained frame history.
+- Split distance construction into portable reader-based alignment/accessory
+  modules, native path wrappers, and a separately feature-gated sketch module.
+  `native-inputs`, `sketchlib`, and `cli` are positive default features; the
+  wasm core uses `--no-default-features`.
+- Moved the native CLI to its own chunked progress loop using
+  `CLI_ADVANCE_CHUNK = 1_000`; the library no longer owns progress rendering.
+- Added operation lifecycle, one-worker budget-partition, partial extraction,
+  and decompressed reader-constructor tests. No multi-worker equivalence test
+  was added.
+
+Verification:
+- `cargo test --all-targets --offline`: 23 tests passed.
+- Default and feature-free Clippy runs with `-D warnings`, native build/docs,
+  feature-free `wasm32-unknown-unknown` check, formatting, and diff checks
+  passed.
+
+Next session:
+- Start the worker-model cleanup described in the Current Task's Next Task.
+
+Blockers:
+- None.

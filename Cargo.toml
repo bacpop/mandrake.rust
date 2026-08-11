@@ -3,21 +3,27 @@ name = "mandrake"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["native-inputs", "sketchlib", "cli"]
+native-inputs = ["dep:bzip2", "needletail/compression"]
+sketchlib = ["dep:sketchlib"]
+cli = ["native-inputs", "sketchlib", "dep:clap", "dep:env_logger", "dep:indicatif"]
+
 [dependencies]
 anyhow = "1"
-bzip2 = "0.4"
-clap = { version = "4.5", features = ["derive"] }
+bzip2 = { version = "0.4", optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
 csv = "1.4"
-env_logger = "0.11"
+env_logger = { version = "0.11", optional = true }
 hashbrown = "0.14"
-indicatif = "0.17"
+indicatif = { version = "0.17", optional = true }
 log = "0.4"
 ndarray = "0.16"
-needletail = { version = "0.5", features = ["compression"] }
+needletail = { version = "0.5", default-features = false }
 rayon = "1.10"
 rand_xoshiro = "0.6"
 roaring = "0.10"
-sketchlib = "0.4.1"
+sketchlib = { version = "0.4.1", optional = true }
 
 [lib]
 path = "src/lib.rs"
@@ -25,3 +31,4 @@ path = "src/lib.rs"
 [[bin]]
 name = "mandrake"
 path = "src/main.rs"
+required-features = ["cli"]

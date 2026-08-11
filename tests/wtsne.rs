@@ -1,12 +1,14 @@
-use mandrake::{FrameSchedule, WtsneOptions, wtsne};
+use mandrake::{EmbeddingInput, EmbeddingOperation, WtsneOptions, wtsne};
 
-fn graph() -> (Vec<u64>, Vec<u64>, Vec<f64>, Vec<f64>) {
-    (
+fn graph() -> EmbeddingInput {
+    EmbeddingInput::new(
         vec![0, 0, 1, 1, 2, 2, 3, 3],
         vec![1, 2, 0, 2, 0, 3, 0, 2],
         vec![0.1, 0.4, 0.1, 0.2, 0.4, 0.3, 0.3, 0.2],
-        vec![1.0, 2.0, 1.0, 1.0],
+        4,
+        Some(vec![1.0, 2.0, 1.0, 1.0]),
     )
+    .unwrap()
 }
 
 fn options() -> WtsneOptions {
@@ -17,202 +19,139 @@ fn options() -> WtsneOptions {
         learning_rate: 1.0,
         initial_exaggeration: false,
         workers: 1,
-        progress: false,
         seed: 42,
-        frame_schedule: FrameSchedule::FinalOnly,
     }
 }
 
 #[test]
-fn valid_graph_returns_finite_two_dimensional_embedding() {
-    let (i, j, distances, weights) = graph();
-    let result = wtsne(&i, &j, &distances, &weights, &options()).unwrap();
-    let embedding = result.embedding();
+fn input_moves_owned_data_and_creates_uniform_weights() {
+    let input = EmbeddingInput::new(vec![0, 1], vec![1, 0], vec![0.1, 0.1], 2, None).unwrap();
+    assert_eq!(input.n_nodes(), 2);
+    assert!(
+        EmbeddingOperation::new(
+            input,
+            &WtsneOptions {
+                max_iterations: 1,
+                repulsion_samples: 1,
+                workers: 1,
+                ..WtsneOptions::default()
+            }
+        )
+        .is_ok()
+    );
+}
 
+#[test]
+fn operation_exposes_initial_state_and_lifecycle_progress() {
+    let mut operation = EmbeddingOperation::new(graph(), &options()).unwrap();
+    assert_eq!(operation.embedding().shape(), &[4, 2]);
+    assert!(operation.embedding().iter().all(|value| value.is_finite()));
+
+    let initial = operation.advance(0);
+    assert_eq!(initial.completed_iterations(), 0);
+    assert_eq!(initial.max_iterations(), 20);
+    assert!(!initial.is_complete());
+
+    let partial = operation.advance(5);
+    assert_eq!(partial.completed_iterations(), 5);
+    assert!(!partial.is_complete());
+    assert!(partial.eq().is_finite());
+
+    let complete = operation.advance(usize::MAX);
+    assert_eq!(complete.completed_iterations(), 20);
+    assert!(complete.is_complete());
+    assert!(operation.embedding().iter().all(|value| value.is_finite()));
+
+    let after_complete = operation.advance(1);
+    assert_eq!(after_complete, complete);
+}
+
+#[test]
+fn blocking_wrapper_returns_finite_two_dimensional_embedding() {
+    let embedding = wtsne(graph(), &options()).unwrap();
     assert_eq!(embedding.shape(), &[4, 2]);
     assert!(embedding.iter().all(|value| value.is_finite()));
 }
 
 #[test]
 fn fixed_seed_is_reproducible_with_one_worker() {
-    let (i, j, distances, weights) = graph();
-    let first = wtsne(&i, &j, &distances, &weights, &options())
-        .unwrap()
-        .into_embedding();
-    let second = wtsne(&i, &j, &distances, &weights, &options())
-        .unwrap()
-        .into_embedding();
-
+    let first = wtsne(graph(), &options()).unwrap();
+    let second = wtsne(graph(), &options()).unwrap();
     assert_eq!(first, second);
 }
 
 #[test]
+fn budget_partitioning_preserves_one_worker_result() {
+    let mut single_budget = EmbeddingOperation::new(graph(), &options()).unwrap();
+    single_budget.advance(20);
+    let single = single_budget.into_embedding();
+
+    let mut partitioned = EmbeddingOperation::new(graph(), &options()).unwrap();
+    partitioned.advance(3);
+    partitioned.advance(7);
+    partitioned.advance(10);
+    let partitioned = partitioned.into_embedding();
+
+    assert_eq!(single, partitioned);
+}
+
+#[test]
 fn changing_seed_changes_reproducible_embedding() {
-    let (i, j, distances, weights) = graph();
     let mut baseline = options();
     baseline.max_iterations = 1;
-    let mut changed = options();
-    changed.max_iterations = 1;
+    let mut changed = baseline.clone();
     changed.seed += 1;
-    let first = wtsne(&i, &j, &distances, &weights, &baseline)
-        .unwrap()
-        .into_embedding();
-    let second = wtsne(&i, &j, &distances, &weights, &changed)
-        .unwrap()
-        .into_embedding();
-
-    assert_ne!(first, second);
-}
-
-#[test]
-fn public_api_module_exposes_configuration_types() {
-    let options = mandrake::api::WtsneOptions::default();
-    assert_eq!(options.seed, 1);
-}
-
-#[test]
-fn parallel_execution_completes_with_finite_output() {
-    let (i, j, distances, weights) = graph();
-    let mut parallel_options = options();
-    parallel_options.workers = 2;
-    let result = wtsne(&i, &j, &distances, &weights, &parallel_options).unwrap();
-    let embedding = result.embedding();
-
-    assert_eq!(embedding.shape(), &[4, 2]);
-    assert!(embedding.iter().all(|value| value.is_finite()));
+    assert_ne!(
+        wtsne(graph(), &baseline).unwrap(),
+        wtsne(graph(), &changed).unwrap()
+    );
 }
 
 #[test]
 fn raw_similarity_mode_is_supported() {
-    let (i, j, mut distances, weights) = graph();
-    distances
-        .iter_mut()
-        .for_each(|distance| *distance = 1.0 - *distance);
-    let mut raw_options = options();
-    raw_options.perplexity = 0.0;
-
-    let result = wtsne(&i, &j, &distances, &weights, &raw_options).unwrap();
-    let embedding = result.embedding();
-    assert!(embedding.iter().all(|value| value.is_finite()));
-}
-
-#[test]
-fn unordered_coo_rows_are_supported() {
-    let (i, j, distances, weights) = graph();
-    let order = [4, 0, 6, 2, 7, 1, 5, 3];
-    let shuffled_i: Vec<u64> = order.iter().map(|&index| i[index]).collect();
-    let shuffled_j: Vec<u64> = order.iter().map(|&index| j[index]).collect();
-    let shuffled_distances: Vec<f64> = order.iter().map(|&index| distances[index]).collect();
-
-    let result = wtsne(
-        &shuffled_i,
-        &shuffled_j,
-        &shuffled_distances,
-        &weights,
-        &options(),
+    let input = EmbeddingInput::new(
+        vec![0, 0, 1, 1, 2, 2, 3, 3],
+        vec![1, 2, 0, 2, 0, 3, 0, 2],
+        vec![0.9, 0.6, 0.9, 0.8, 0.6, 0.7, 0.7, 0.8],
+        4,
+        Some(vec![1.0, 2.0, 1.0, 1.0]),
     )
     .unwrap();
-    let embedding = result.embedding();
-    assert_eq!(embedding.shape(), &[4, 2]);
-    assert!(embedding.iter().all(|value| value.is_finite()));
+    let mut raw_options = options();
+    raw_options.perplexity = 0.0;
+    assert!(
+        wtsne(input, &raw_options)
+            .unwrap()
+            .iter()
+            .all(|value| value.is_finite())
+    );
 }
 
 #[test]
-fn invalid_inputs_are_rejected() {
-    let (i, j, distances, weights) = graph();
-    let error = wtsne(&i[..7], &j, &distances, &weights, &options()).unwrap_err();
+fn input_rejects_only_structural_mismatches() {
+    let error = EmbeddingInput::new(vec![0], vec![], vec![0.1], 2, None).unwrap_err();
     assert!(error.to_string().contains("same length"));
 
-    let mut bad_i = i;
-    bad_i[0] = 4;
-    let error = wtsne(&bad_i, &j, &distances, &weights, &options()).unwrap_err();
-    assert!(error.to_string().contains("node index"));
-
-    bad_i[0] = u64::MAX;
-    let error = wtsne(&bad_i, &j, &distances, &weights, &options()).unwrap_err();
-    assert!(error.to_string().contains("node index"));
+    let error = EmbeddingInput::new(vec![0], vec![1], vec![0.1], 2, Some(vec![1.0])).unwrap_err();
+    assert!(error.to_string().contains("declared node count"));
 }
 
 #[test]
-fn final_only_result_contains_final_metadata() {
-    let (i, j, distances, weights) = graph();
-    let result = wtsne(&i, &j, &distances, &weights, &options()).unwrap();
-
-    assert!(!result.is_animated());
-    assert_eq!(result.frames().len(), 1);
-    let frame = &result.frames()[0];
-    assert_eq!(frame.iteration(), 20);
-    assert_eq!(frame.worker_updates(), 20);
-    assert!(frame.eq().is_finite());
-    assert_eq!(frame.embedding(), result.embedding());
+fn incomplete_operation_can_transfer_its_partial_embedding() {
+    let mut operation = EmbeddingOperation::new(graph(), &options()).unwrap();
+    operation.advance(1);
+    let embedding = operation.into_embedding();
+    assert_eq!(embedding.shape(), &[4, 2]);
 }
 
 #[test]
-fn linear_schedule_includes_initial_and_final_states() {
-    let (i, j, distances, weights) = graph();
-    let mut scheduled = options();
-    scheduled.frame_schedule = FrameSchedule::Linear { frame_count: 4 };
-    let result = wtsne(&i, &j, &distances, &weights, &scheduled).unwrap();
-
-    assert!(result.is_animated());
-    assert_eq!(result.frames().len(), 4);
+fn public_api_module_exposes_operation_types() {
+    let options = mandrake::api::WtsneOptions::default();
+    assert_eq!(options.seed, 1);
     assert_eq!(
-        result
-            .frames()
-            .iter()
-            .map(|frame| frame.iteration())
-            .collect::<Vec<_>>(),
-        vec![0, 7, 13, 20]
+        mandrake::api::EmbeddingInput::new(vec![0], vec![1], vec![0.1], 2, None)
+            .unwrap()
+            .n_nodes(),
+        2
     );
-    assert_eq!(result.frames().first().unwrap().eq(), 1.0);
-    assert_eq!(
-        result.frames().last().unwrap().embedding(),
-        result.embedding()
-    );
-}
-
-#[test]
-fn exponential_schedule_uses_geometric_positions() {
-    let (i, j, distances, weights) = graph();
-    let mut scheduled = options();
-    scheduled.max_iterations = 15;
-    scheduled.frame_schedule = FrameSchedule::Exponential { frame_count: 5 };
-    let result = wtsne(&i, &j, &distances, &weights, &scheduled).unwrap();
-
-    assert_eq!(
-        result
-            .frames()
-            .iter()
-            .map(|frame| frame.iteration())
-            .collect::<Vec<_>>(),
-        vec![0, 1, 3, 7, 15]
-    );
-}
-
-#[test]
-fn recording_frames_does_not_change_final_embedding() {
-    let (i, j, distances, weights) = graph();
-    let final_only = wtsne(&i, &j, &distances, &weights, &options())
-        .unwrap()
-        .into_embedding();
-    let mut scheduled = options();
-    scheduled.frame_schedule = FrameSchedule::Linear { frame_count: 4 };
-    let with_frames = wtsne(&i, &j, &distances, &weights, &scheduled)
-        .unwrap()
-        .into_embedding();
-
-    assert_eq!(final_only, with_frames);
-}
-
-#[test]
-fn invalid_frame_counts_are_rejected() {
-    let (i, j, distances, weights) = graph();
-    let mut scheduled = options();
-    scheduled.frame_schedule = FrameSchedule::Linear { frame_count: 1 };
-    let error = wtsne(&i, &j, &distances, &weights, &scheduled).unwrap_err();
-    assert!(error.to_string().contains("frame count"));
-
-    scheduled.frame_schedule = FrameSchedule::Exponential { frame_count: 22 };
-    let error = wtsne(&i, &j, &distances, &weights, &scheduled).unwrap_err();
-    assert!(error.to_string().contains("frame count"));
 }
