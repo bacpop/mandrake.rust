@@ -1,9 +1,5 @@
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Parser};
-#[cfg(feature = "PyO3")]
-use clap::{Args as ClapArgs, Subcommand};
-#[cfg(feature = "PyO3")]
-use mandrake::FrameSchedule;
 use mandrake::{
     SketchOptions, SparseDistances, Sparsification, WtsneOptions, accessory_distances,
     pair_snp_distances, sketch_distances, sketch_distances_from_fasta_list, wtsne,
@@ -17,7 +13,6 @@ use std::path::{Path, PathBuf};
     name = "mandrake",
     about = "Embed sparse genomic distances with Mandrake"
 )]
-#[cfg_attr(feature = "PyO3", command(subcommand_negates_reqs = true))]
 #[command(group(
     ArgGroup::new("input")
         .required(true)
@@ -38,8 +33,8 @@ struct Args {
     /// Sketch prefix (.skm/.skd) or a text file containing one FASTA path per line.
     #[arg(long, value_name = "PREFIX_OR_LIST")]
     sketches: Option<PathBuf>,
-    /// Number of neighbours to retain per sample
-    #[arg(short, long, visible_alias = "kNN", value_name = "N")]
+    /// Number of neighbours to retain per sample; accepts the legacy --kNN spelling.
+    #[arg(long, visible_alias = "kNN", value_name = "N")]
     knn: Option<usize>,
     /// Strict normalized distance threshold (not supported for sketches).
     #[arg(long, value_name = "DISTANCE")]
@@ -51,7 +46,7 @@ struct Args {
     #[arg(long, default_value = "mandrake", value_name = "PREFIX")]
     output: PathBuf,
     /// Conditional-probability perplexity; non-positive values use raw similarities.
-    #[arg(long, default_value_t = 30.0)]
+    #[arg(long, default_value_t = 15.0)]
     perplexity: f64,
     /// Maximum optimisation iterations.
     #[arg(long, default_value_t = 100_000)]
@@ -80,63 +75,11 @@ struct Args {
     /// Sketch bins used when --sketches points to a FASTA list.
     #[arg(long, default_value_t = 1_000)]
     sketch_size: u64,
-    /// Retain sampled optimisation frames for a later `mandrake plot --animate` run.
-    #[cfg(feature = "PyO3")]
-    #[arg(long)]
-    save_animation: bool,
-    #[cfg(feature = "PyO3")]
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[cfg(feature = "PyO3")]
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Render plots from an embedding output prefix.
-    Plot(PlotArgs),
-}
-
-#[cfg(feature = "PyO3")]
-#[derive(Debug, ClapArgs)]
-struct PlotArgs {
-    /// Prefix containing `.embedding.txt`, `.names.txt`, and optional frames.
-    #[arg(long, value_name = "PREFIX")]
-    input_prefix: PathBuf,
-    /// Prefix for generated visualization files; defaults to --input-prefix.
-    #[arg(long, value_name = "PREFIX")]
-    output: Option<PathBuf>,
-    /// Headerless sample-name/tab/label file used instead of HDBSCAN labels.
-    #[arg(long, value_name = "FILE")]
-    labels: Option<PathBuf>,
-    /// Skip automatic HDBSCAN clustering when no labels file is supplied.
-    #[arg(long)]
-    no_clustering: bool,
-    /// Omit sample names from Plotly hover labels.
-    #[arg(long)]
-    no_html_labels: bool,
-    /// Render an MP4 from the saved sampled-frame archive.
-    #[arg(long)]
-    animate: bool,
-    /// Seed used for deterministic plot colours.
-    #[arg(long, default_value_t = 1)]
-    seed: u64,
 }
 
 pub fn run() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
-    #[cfg(feature = "PyO3")]
-    if let Some(Command::Plot(plot)) = args.command {
-        return crate::visualization::run_plot(
-            &plot.input_prefix,
-            plot.output.as_deref(),
-            plot.labels.as_deref(),
-            plot.no_clustering,
-            plot.no_html_labels,
-            plot.animate,
-            plot.seed,
-        );
-    }
     let sparsification = parse_sparsification(&args)?;
     let distances = build_distances(&args, sparsification)?;
 
@@ -152,16 +95,6 @@ pub fn run() -> Result<()> {
         seed: args.seed,
         ..WtsneOptions::default()
     };
-    #[cfg(feature = "PyO3")]
-    let options = if args.save_animation {
-        let frame_count = options.max_iterations.saturating_add(1).clamp(2, 400);
-        WtsneOptions {
-            frame_schedule: FrameSchedule::Exponential { frame_count },
-            ..options
-        }
-    } else {
-        options
-    };
     let results = wtsne(
         distances.rows(),
         distances.columns(),
@@ -170,11 +103,6 @@ pub fn run() -> Result<()> {
         &options,
     )
     .context("running wtsne")?;
-    #[cfg(feature = "PyO3")]
-    if args.save_animation {
-        crate::visualization::save_frame_archive(&args.output, &results)
-            .context("saving animation frame archive")?;
-    }
     write_outputs(&args.output, &distances, results.embedding())?;
     Ok(())
 }
