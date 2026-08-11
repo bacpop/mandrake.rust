@@ -281,8 +281,8 @@ fn conditional_probabilities(
             .par_iter()
             .map(|row| {
                 let mut beta = 1.0;
-                let mut beta_min = f64::NEG_INFINITY;
-                let mut beta_max = f64::INFINITY;
+                let mut beta_min = -f64::MAX;
+                let mut beta_max = f64::MAX;
                 let mut row_probabilities = vec![0.0; row.len()];
 
                 for _ in 0..PERPLEXITY_STEPS {
@@ -309,14 +309,14 @@ fn conditional_probabilities(
                     }
                     if difference > 0.0 {
                         beta_min = beta;
-                        beta = if beta_max.is_infinite() {
+                        beta = if beta_max == f64::MAX {
                             beta * 2.0
                         } else {
                             (beta + beta_max) * 0.5
                         };
                     } else {
                         beta_max = beta;
-                        beta = if beta_min.is_infinite() {
+                        beta = if beta_min == -f64::MIN {
                             beta * 0.5
                         } else {
                             (beta + beta_min) * 0.5

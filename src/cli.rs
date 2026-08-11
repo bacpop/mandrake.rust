@@ -24,6 +24,9 @@ use std::path::{Path, PathBuf};
         .args(["knn", "threshold"])
 ))]
 struct Args {
+    /// Output prefix for embedding and names files.
+    #[arg(short, long, required = true, value_name = "PREFIX")]
+    output: PathBuf,
     /// Multiple-sequence FASTA alignment (plain or compressed).
     #[arg(long, value_name = "FILE")]
     alignment: Option<PathBuf>,
@@ -33,8 +36,8 @@ struct Args {
     /// Sketch prefix (.skm/.skd) or a text file containing one FASTA path per line.
     #[arg(long, value_name = "PREFIX_OR_LIST")]
     sketches: Option<PathBuf>,
-    /// Number of neighbours to retain per sample; accepts the legacy --kNN spelling.
-    #[arg(long, visible_alias = "kNN", value_name = "N")]
+    /// Number of neighbours to retain per sample
+    #[arg(short, long, visible_alias = "kNN", value_name = "N")]
     knn: Option<usize>,
     /// Strict normalized distance threshold (not supported for sketches).
     #[arg(long, value_name = "DISTANCE")]
@@ -42,14 +45,11 @@ struct Args {
     /// Use accessory rather than core sketch distances.
     #[arg(long)]
     use_accessory: bool,
-    /// Output prefix for embedding and names files.
-    #[arg(long, default_value = "mandrake", value_name = "PREFIX")]
-    output: PathBuf,
     /// Conditional-probability perplexity; non-positive values use raw similarities.
-    #[arg(long, default_value_t = 15.0)]
+    #[arg(long, default_value_t = 30.0)]
     perplexity: f64,
     /// Maximum optimisation iterations.
-    #[arg(long, default_value_t = 100_000)]
+    #[arg(long, default_value_t = 1_000_000)]
     max_iterations: usize,
     /// Repulsion samples per worker and iteration.
     #[arg(long, default_value_t = 5)]
@@ -68,7 +68,7 @@ struct Args {
     seed: u64,
     /// Disable the progress bar.
     #[arg(long)]
-    no_progress: bool,
+    quiet: bool,
     /// K-mer size used when --sketches points to a FASTA list.
     #[arg(long, default_value_t = 21)]
     sketch_kmer: usize,
@@ -91,7 +91,7 @@ pub fn run() -> Result<()> {
         learning_rate: args.learning_rate,
         initial_exaggeration: args.initial_exaggeration,
         workers: args.workers,
-        progress: !args.no_progress,
+        progress: !args.quiet,
         seed: args.seed,
         ..WtsneOptions::default()
     };
