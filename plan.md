@@ -71,10 +71,12 @@ Mirror the style of [sketchlib.rust]((https://github.com/bacpop/sketchlib.rust):
 Required API:
 
 ```rust
-pub fn wtsne(...)
+pub fn wtsne(input: EmbeddingInput, options: &WtsneOptions) -> Result<Array2<f64>>
 ```
 
-Returns an `SceResults` object whose final state is an `ndarray` embedding.
+The cooperative `EmbeddingOperation` API is the canonical interface; `wtsne`
+is its blocking convenience wrapper and returns only the final ndarray
+embedding.
 
 Expose:
 
@@ -97,8 +99,8 @@ task here.
 ### Checklist
 
 - [x] Update the plan with the wasm/async scope and remove superseded follow-up work
-- [ ] Resolve the public async API, polling contract, and lifecycle semantics
-- [ ] Define wasm32-compatible execution and scheduling constraints
+- [x] Resolve the public async API, polling contract, and lifecycle semantics
+- [x] Define wasm32-compatible execution and scheduling constraints
 - [ ] Remove retained animation-frame types and implementation
 - [ ] Implement the async, pollable embedding API
 - [ ] Add focused lifecycle, polling, and final-result coverage
@@ -109,8 +111,8 @@ task here.
 
 Working on:
 
-The completed module/RNG phase is the baseline. The wasm/async API design is
-being resolved before implementation.
+The wasm/async API design is complete and documented. No implementation changes
+were made during this grilling phase; the next session begins implementation.
 
 Last verified:
 
@@ -119,6 +121,14 @@ Last verified:
 `cargo fmt --all`, `cargo clippy --all-targets --offline -- -D warnings`, and
 `git diff --check` pass. The online Cargo attempt was blocked by unavailable
 crates.io DNS; all required dependencies were available in the local cache.
+
+Current blocker:
+
+2026-08-11: `cargo check --target wasm32-unknown-unknown --offline` reaches
+native compression dependencies and fails while compiling `lzma-sys` and
+`bzip2-sys`, whose C sources require `stdlib.h`. The target is installed. The
+wasm-facing crate boundary has been designed but is not yet implemented; the
+planned feature split addresses this blocker.
 
 ---
 
@@ -142,9 +152,9 @@ crates.io DNS; all required dependencies were available in the local cache.
 
 ## Progress
 
-Use indicatif.
-- Progress is optional through `WtsneOptions::progress` and is updated once per
-  completed optimisation iteration.
+The library returns `EmbeddingProgress` from each synchronous advance. The
+native CLI renders that status with indicatif; the portable core owns no
+terminal or UI renderer.
 
 ## Conditional probabilities
 
@@ -154,13 +164,14 @@ Port implementation from `wtsne.hpp`.
 
 ## v1 API and scope
 
-- Public input is zero-based COO `I`/`J` endpoint vectors, distance values, and
-  one non-negative weight per node.
-- `wtsne(...)` returns `Result<SceResults>`; the final frame is an ndarray with
-  shape `(n_nodes, 2)`.
+- Public input is an owned `EmbeddingInput` containing zero-based COO `I`/`J`
+  endpoint vectors, distance values, an explicit node count, and optional
+  weights.
+- `wtsne(...)` returns `Result<Array2<f64>>`; the embedding has shape
+  `(n_nodes, 2)`.
 - `WtsneOptions` carries perplexity, iteration count, repulsion samples,
-  learning rate, initial exaggeration, worker count, progress setting, seed,
-  and frame schedule.
+  learning rate, initial exaggeration, worker count, and seed. Retained frame
+  schedules and library-owned progress rendering are removed.
 - Tests target public behavior: validation, normalization, finite output,
   reproducibility for one worker, and successful parallel execution.
 - No Python bindings or CUDA are part of this milestone.
@@ -194,12 +205,14 @@ Port implementation from `wtsne.hpp`.
 
 ## Module seams for the refactor
 
-- `api.rs` owns public SCE configuration/result types; `lib.rs` remains a thin
-  facade that re-exports existing root paths and the new `api` module.
-- `sce.rs` owns `wtsne()` and optimiser implementation details, including
-  validation, probabilities, sampling, atomic embedding updates, and frames.
-- `distances/mod.rs` owns the current distance interface and implementations;
-  `distances/gene.rs` remains private to that module.
+- `api.rs` owns public SCE configuration, input, operation, progress, and
+  embedding-accessor types; `lib.rs` remains a thin facade with root
+  re-exports.
+- `sce.rs` owns the cooperative operation, blocking `wtsne()`, and optimiser
+  implementation details, including probabilities, sampling, and atomic
+  embedding updates. It retains only the current embedding.
+- `distances/` is split into portable reader-based constructors and native
+  path/sketch adapters; gene parsing remains private to the distance module.
 - `main.rs` becomes a minimal entry point; binary-only argument parsing,
   source dispatch, embedding invocation, and output writing move to `cli.rs`.
 - The public interface is tested through root re-exports and CLI behaviour;
@@ -211,31 +224,106 @@ Port implementation from `wtsne.hpp`.
   same-seed runs while intentionally changing fixed-seed embedding values from
   the former hand-written xoshiro128+ implementation.
 
-## SceResults design
-
-- `wtsne()` returns `Result<SceResults>`; `SceResults` owns a non-empty,
-  chronological frame sequence and exposes borrowed or consuming final-
-  embedding accessors.
-- `FrameSchedule::FinalOnly` stores only the final state. `Linear` and
-  `Exponential` counts include the initial and final states and require at
-  least two distinct iteration positions.
-- Exponential positions use geometric spacing
-  `round((max_iterations + 1)^u - 1)` with monotonic clamping so the requested
-  count remains exact.
-- Each frame records outer iteration, worker-update count, `Eq`, and a 2D
-  ndarray snapshot. Captures occur only after an optimisation iteration has
-  completed, so snapshots are race-free.
-- Frame storage is intentionally in-memory and scales with frame count and
-  node count, matching the C++ `sce_results` role.
-
 ## Wasm/async API transition
 
 - Replace the retained-frame result model with a caller-owned, cooperatively
   stepped embedding operation. The caller advances bounded work and may poll
   the current state between steps; this avoids requiring threads, an executor,
   or a particular async runtime on `wasm32-unknown-unknown`.
-- The exact step-size, snapshot ownership, completion, and error contracts are
-  still to be resolved before implementation.
+- Each advance accepts a caller-selected iteration budget, so UI callers can
+  choose short work units while native callers can choose larger batches.
+- `advance` returns lightweight progress/completion metadata. The operation
+  retains one current `Array2` embedding, replacing it after every completed
+  iteration; callers retrieve that state through a separate accessor. It never
+  retains a historical frame series.
+- The initialized iteration-0 embedding is available through that accessor as
+  soon as the operation is created.
+- Advancing a completed operation is idempotent: it leaves the final embedding
+  unchanged and returns completion again rather than reporting an error.
+- Dropping a caller-owned operation is cancellation; no explicit cancellation
+  state or method is needed because work occurs only during `advance`.
+- Construction performs input validation and setup and is fallible. Once an
+  operation is created successfully, `advance` is infallible and returns only
+  progress/completion metadata.
+- Construction takes ownership of the sparse input and weights the operation
+  needs for subsequent advances, avoiding an implicit copy of large inputs.
+- Retain `wtsne` as a blocking convenience wrapper that constructs an operation,
+  advances it to completion, and returns only the final embedding. The
+  cooperative operation remains the canonical interface.
+- Each advance reports completed iterations, configured maximum iterations, and
+  the `Eq` convergence statistic. Worker-update counts are removed from the
+  public API because workers are not part of the intended long-term model.
+- A zero iteration budget is a valid no-op poll. `Eq` remains diagnostic and
+  must not cause convergence-based early termination.
+- The configured maximum iteration count is the sole terminal limit. An
+  oversized budget performs the remaining iterations and then returns
+  completion.
+- Split distance code into focused files: portable alignment/accessory
+  constructors accept caller-provided readers, while path-opening and
+  compression wrappers are native-only. Sketchlib-backed constructors are
+  separately feature-gated because the target wasm application supplies that
+  functionality outside Mandrake.
+- Use positive optional `native-inputs` and `sketchlib` Cargo features, enabled
+  by default for native compatibility. The portable wasm build selects
+  `--no-default-features` rather than relying on an additive `wasm` feature to
+  disable native dependencies.
+- The `mandrake` CLI is native-only and requires both `native-inputs` and
+  `sketchlib`; a `--no-default-features` wasm build exposes the library core,
+  not a degraded path-oriented command.
+- Portable reader-based distance constructors consume already-decompressed
+  bytes. Compression detection and decoding remain native path-loader or
+  caller responsibilities.
+- `SparseDistances` remains the labeled distance-input value. The numerical,
+  owned `EmbeddingInput` is distinct and contains only COO vectors and weights;
+  names remain with the caller rather than the long-lived operation.
+- `EmbeddingInput` construction accepts `Option<Vec<f64>>` weights. It moves
+  supplied weights unchanged; `None` explicitly selects a newly created
+  uniform-weight vector.
+- `EmbeddingInput::new` takes owned COO vectors, explicit `n_nodes`, and
+  optional weights directly. It neither consumes sample labels nor copies
+  supplied numerical inputs.
+- Input construction performs only constant-time structural validation (for
+  example, matching COO lengths and declared vector lengths). It must not scan
+  large COO, distance, or weight vectors solely to validate values, preserving
+  Mandrake's efficiency priority.
+- Per-element validation is limited to debug assertions in distance
+  construction. The embedding phase performs only basic non-scanning checks
+  and treats its owned numeric input as trusted in release builds.
+- On `wasm32-unknown-unknown`, use Rayon's sequential global fallback rather
+  than an explicit `ThreadPoolBuilder`, which Rayon documents as unsupported
+  on that target. Native builds retain configured pools until the separate
+  worker-model cleanup.
+- Remove the terminal-specific `WtsneOptions::progress` setting. The library
+  reports operation progress only; the native CLI retains its progress display
+  by rendering that reported status itself.
+- Make a clean public API break: remove `FrameSchedule`, `SceFrame`, and
+  `SceResults`. The retained blocking `wtsne` wrapper consumes `EmbeddingInput`
+  and returns `Result<Array2<f64>>`.
+- For this phase, the CLI advances a fixed internal iteration chunk and renders
+  progress after each chunk. Interval-driven rendering from a separate thread
+  is deferred as a non-priority follow-up.
+- Define that chunk as `const CLI_ADVANCE_CHUNK: usize = 1_000` in the CLI.
+- Advancing with different budget partitions should ideally preserve fixed-seed
+  results, but this is secondary to performance and must not justify added
+  copying, synchronization, or validation overhead.
+- Regression coverage checks budget-partition invariance only in the
+  deterministic single-worker path. Multi-worker equivalence is not tested and
+  is deferred with the worker-model removal.
+- Retain `WtsneOptions::workers` temporarily for native implementation behavior;
+  remove it later with the worker-model cleanup. WASM uses sequential
+  execution, and workers do not appear in public progress/status values.
+- Keep the Rust operation synchronous (`advance(&mut self, budget)`); callers
+  provide any async/UI scheduling around it. No executor or `Future` is part of
+  this phase.
+- `EmbeddingOperation::embedding()` borrows the retained current `Array2`; a
+  separate `into_embedding()` consumes the operation and transfers the final
+  array. Polling does not clone the embedding.
+- `advance` returns one `EmbeddingProgress` struct carrying completed and
+  maximum iteration counts plus `Eq`; completion is queried through
+  `is_complete()` rather than a separate status enum.
+- `into_embedding()` may consume an incomplete operation and return its latest
+  state without copying, but emits a `WARN` log unless the operation has
+  completed.
 
 ---
 
@@ -247,9 +335,10 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-Continue the wasm/async API design session by resolving the public operation
-lifecycle and polling contract, then record the chosen terms and architectural
-decision before implementation.
+Implement the confirmed wasm/async API: introduce owned `EmbeddingInput` and
+cooperative `EmbeddingOperation`, remove retained frame results, split and
+feature-gate distance inputs, preserve native CLI progress rendering, and add
+focused lifecycle tests.
 
 # Further tasks
 
@@ -310,8 +399,7 @@ Next session:
 - Distance-input phase (completed in the following session-log entry)
 
 Blockers:
-- None for the `SceResults` phase; the C++ performance comparison remains
-  pending.
+- None for the `SceResults` phase.
 
 ## 2026-08-07 (distance-input phase)
 
@@ -372,12 +460,45 @@ Blockers:
 Completed:
 - Replaced the completed module/RNG phase as the Current Task with the
   wasm32-compatible async embedding API transition.
-- Removed the superseded performance-comparison follow-up from the plan.
+- Removed the superseded follow-up from the plan.
 
 Next session:
-- Resolve the public operation lifecycle and polling contract before changing
-  the existing `SceResults`/frame implementation.
+- Implement the confirmed cooperative operation and portable distance boundary.
 
 Blockers:
-- None; API design decisions are intentionally being made through the active
-  grilling session.
+- The existing wasm check reaches native compression dependencies; feature
+  gating and reader-based distance constructors are required before target
+  verification can pass.
+
+## 2026-08-11 (wasm/async API design)
+
+Completed:
+- Confirmed the cooperative, synchronous `EmbeddingOperation` contract with
+  caller-selected iteration budgets, zero-budget no-op polling, fixed maximum
+  iteration completion, idempotent post-completion advances, drop cancellation,
+  borrowed current embeddings, and consuming partial/final extraction.
+- Confirmed the clean removal of retained frame result types and the blocking
+  `wtsne` wrapper returning only `Array2<f64>`.
+- Confirmed owned numerical input with optional weights, constant-time
+  construction checks, debug-only per-element distance assertions, and no
+  multi-worker equivalence tests.
+- Confirmed the portable distance boundary, positive native/sketch Cargo
+  features, native-only CLI, wasm sequential fallback, and fixed CLI chunk
+  constant.
+- Recorded the glossary and architectural decisions in `CONTEXT.md` and
+  `docs/adr/0001-cooperative-embedding-operation.md` plus
+  `docs/adr/0002-portable-distance-core.md`.
+
+Verification:
+- `rustup target list --installed` includes `wasm32-unknown-unknown`.
+- `cargo check --target wasm32-unknown-unknown --offline` currently fails in
+  native `lzma-sys`/`bzip2-sys` dependencies; implementation of the planned
+  feature boundary is the next step.
+
+Next session:
+- Implement the confirmed API and distance-module split, then run focused
+  native and wasm verification.
+
+Blockers:
+- No unresolved design blockers. The known wasm dependency failure is an
+  implementation task addressed by the agreed feature split.
