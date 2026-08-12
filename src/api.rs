@@ -57,28 +57,28 @@ impl EmbeddingInput {
 /// Progress reported after advancing an embedding operation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EmbeddingProgress {
-    completed_iterations: usize,
-    max_iterations: usize,
+    completed_updates: usize,
+    max_updates: usize,
     eq: f64,
 }
 
 impl EmbeddingProgress {
-    pub(crate) fn new(completed_iterations: usize, max_iterations: usize, eq: f64) -> Self {
+    pub(crate) fn new(completed_updates: usize, max_updates: usize, eq: f64) -> Self {
         Self {
-            completed_iterations,
-            max_iterations,
+            completed_updates,
+            max_updates,
             eq,
         }
     }
 
-    /// Number of completed optimisation iterations.
-    pub fn completed_iterations(&self) -> usize {
-        self.completed_iterations
+    /// Number of completed stochastic update attempts.
+    pub fn completed_updates(&self) -> usize {
+        self.completed_updates
     }
 
-    /// Configured maximum number of optimisation iterations.
-    pub fn max_iterations(&self) -> usize {
-        self.max_iterations
+    /// Configured target number of stochastic update attempts.
+    pub fn max_updates(&self) -> usize {
+        self.max_updates
     }
 
     /// Current SCE convergence statistic.
@@ -86,15 +86,15 @@ impl EmbeddingProgress {
         self.eq
     }
 
-    /// Whether the operation has reached its configured iteration limit.
+    /// Whether the operation has reached or exceeded its configured update target.
     pub fn is_complete(&self) -> bool {
-        self.completed_iterations == self.max_iterations
+        self.completed_updates >= self.max_updates
     }
 }
 
 /// A caller-owned, cooperatively stepped embedding calculation.
 ///
-/// Use [`Self::advance`] to perform a caller-selected amount of work and
+/// Use [`Self::advance`] to perform a caller-selected number of rounds and
 /// [`Self::embedding`] to borrow the latest completed embedding state.
 pub struct EmbeddingOperation {
     pub(crate) inner: crate::sce::EmbeddingOperationInner,
@@ -106,15 +106,17 @@ impl EmbeddingOperation {
         crate::sce::EmbeddingOperationInner::new(input, options).map(|inner| Self { inner })
     }
 
-    /// Advance by up to `iteration_budget` iterations.
+    /// Advance by up to `round_budget` complete parallel update rounds.
     ///
-    /// A zero budget is a no-op poll. An oversized budget performs the
-    /// remaining work only. Advancing after completion is idempotent.
-    pub fn advance(&mut self, iteration_budget: usize) -> EmbeddingProgress {
-        self.inner.advance(iteration_budget)
+    /// A zero budget is a no-op poll. Each non-zero round performs one update
+    /// per configured native thread; the final round may carry the operation
+    /// up to `threads - 1` updates beyond its target. Advancing after
+    /// completion is idempotent.
+    pub fn advance(&mut self, round_budget: usize) -> EmbeddingProgress {
+        self.inner.advance(round_budget)
     }
 
-    /// Borrow the current embedding, including the initial iteration-0 state.
+    /// Borrow the current embedding, including the initial zero-update state.
     pub fn embedding(&self) -> &Array2<f64> {
         self.inner.embedding()
     }
@@ -133,16 +135,19 @@ pub struct WtsneOptions {
     /// Target entropy for conditional probability preprocessing. Values at or
     /// below zero use the input values as raw similarities (`1 - distance`).
     pub perplexity: f64,
-    /// Number of optimisation iterations.
-    pub max_iterations: usize,
-    /// Number of randomly sampled repulsion pairs per worker and iteration.
+    /// Target number of stochastic update attempts.
+    pub max_updates: usize,
+    /// Number of randomly sampled repulsion pairs per update attempt.
     pub repulsion_samples: usize,
     /// Initial learning rate.
     pub learning_rate: f64,
     /// Use four-times stronger attraction during the first tenth of the run.
     pub initial_exaggeration: bool,
-    /// Number of Rayon workers used on native targets.
-    pub workers: usize,
+    /// Number of native Rayon threads used for each parallel update round.
+    /// Wasm accepts this value but executes sequentially.
+    pub threads: usize,
+    /// Suppress native phase progress bars.
+    pub quiet: bool,
     /// Seed for all random-number streams.
     pub seed: u64,
 }
@@ -151,11 +156,12 @@ impl Default for WtsneOptions {
     fn default() -> Self {
         Self {
             perplexity: 15.0,
-            max_iterations: 100_000,
+            max_updates: 100_000,
             repulsion_samples: 5,
             learning_rate: 1.0,
             initial_exaggeration: false,
-            workers: 1,
+            threads: 1,
+            quiet: false,
             seed: 1,
         }
     }

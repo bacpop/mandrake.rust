@@ -11,7 +11,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use super::{
-    SparseDistances, Sparsification, flatten_rows, select_distance_row, validate_sparsification,
+    DistanceOptions, SparseDistances, Sparsification, flatten_rows, select_distance_row,
+    validate_distance_options, with_pool,
 };
 
 /// Options used when sketching a FASTA list in memory.
@@ -38,10 +39,14 @@ impl Default for SketchOptions {
 /// threshold operation, so threshold sparsification is rejected here.
 pub fn sketch_distances<P: AsRef<Path>>(
     prefix: P,
-    sparsification: Sparsification,
+    distance_options: &DistanceOptions,
     use_accessory: bool,
 ) -> Result<SparseDistances> {
-    if matches!(sparsification, Sparsification::Threshold(_)) {
+    validate_distance_options(distance_options)?;
+    if matches!(
+        distance_options.sparsification,
+        Sparsification::Threshold(_)
+    ) {
         bail!("threshold sparsification is not supported for sketch inputs; use --knn");
     }
     let prefix = normalize_sketch_prefix(prefix.as_ref());
@@ -51,26 +56,26 @@ pub fn sketch_distances<P: AsRef<Path>>(
             .ok_or_else(|| anyhow!("sketch prefix is not valid UTF-8"))?,
     )
     .with_context(|| format!("loading sketch database {}", prefix.display()))?;
-    sparse_sketch_distances(&sketches, sparsification, use_accessory)
+    sparse_sketch_distances(&sketches, distance_options, use_accessory)
 }
 
 /// Calculate sketch distances from one FASTA/FASTQ path per sample.
 pub fn sketch_distances_from_fasta_list<P: AsRef<Path>>(
     files: &[P],
-    sparsification: Sparsification,
+    distance_options: &DistanceOptions,
     use_accessory: bool,
-    options: &SketchOptions,
+    sketch_options: &SketchOptions,
 ) -> Result<SparseDistances> {
     if files.is_empty() {
         bail!("at least two FASTA files are required");
     }
-    if options.kmer_sizes.is_empty() || options.kmer_sizes.contains(&0) {
+    validate_distance_options(distance_options)?;
+    if sketch_options.kmer_sizes.is_empty() || sketch_options.kmer_sizes.contains(&0) {
         bail!("sketch k-mer sizes must be positive");
     }
-    if options.sketch_size == 0 {
+    if sketch_options.sketch_size == 0 {
         bail!("sketch size must be positive");
     }
-    validate_sparsification(sparsification)?;
     let mut all_sketches = Vec::with_capacity(files.len());
     for path in files {
         let path = path.as_ref();
@@ -80,8 +85,8 @@ pub fn sketch_distances_from_fasta_list<P: AsRef<Path>>(
         let mut records = vec![NeedletailIterator::new(reader)];
         let mut opts = SketchingOpts::default();
         opts.name = sample_name(path);
-        opts.k_vals = options.kmer_sizes.clone();
-        opts.sketch_size = options.sketch_size;
+        opts.k_vals = sketch_options.kmer_sizes.clone();
+        opts.sketch_size = sketch_options.sketch_size;
         let mut sketches = sketch_data(&mut records, opts);
         all_sketches.append(&mut sketches);
     }
@@ -90,23 +95,45 @@ pub fn sketch_distances_from_fasta_list<P: AsRef<Path>>(
     }
     let sketches = MultiSketch::from_sketches(
         &mut all_sketches,
-        options.sketch_size,
-        &options.kmer_sizes,
+        sketch_options.sketch_size,
+        &sketch_options.kmer_sizes,
         HashType::DNA,
     );
-    sparse_sketch_distances(&sketches, sparsification, use_accessory)
+    sparse_sketch_distances(&sketches, distance_options, use_accessory)
 }
 
 fn sparse_sketch_distances(
     sketches: &MultiSketch,
-    sparsification: Sparsification,
+    distance_options: &DistanceOptions,
+    use_accessory: bool,
+) -> Result<SparseDistances> {
+    let progress = super::distance_progress(distance_options, 1);
+    // sketchlib's streaming accessory implementation uses a scoped producer
+    // and a blocking writer loop; leave one coordinator lane available when
+    // the caller requests a single thread.
+    let pool_threads = if use_accessory {
+        distance_options.threads.max(2)
+    } else {
+        distance_options.threads
+    };
+    let result = with_pool(pool_threads, || {
+        sparse_sketch_distances_inner(sketches, distance_options, use_accessory)
+    })?;
+    progress.inc(1);
+    progress.finish(None);
+    result
+}
+
+fn sparse_sketch_distances_inner(
+    sketches: &MultiSketch,
+    distance_options: &DistanceOptions,
     use_accessory: bool,
 ) -> Result<SparseDistances> {
     let n = sketches.number_samples_loaded();
     if n < 2 {
         bail!("at least two sketch samples are required");
     }
-    let requested_k = match sparsification {
+    let requested_k = match distance_options.sparsification {
         Sparsification::Knn(k) => k,
         Sparsification::Threshold(_) => unreachable!(),
     };
@@ -137,7 +164,7 @@ fn sparse_sketch_distances(
     }
 
     if use_accessory {
-        return sparse_sketch_accessory(sketches, names, k);
+        return sparse_sketch_accessory(sketches, names, k, distance_options);
     }
 
     let dist_type = distances::set_k(sketches, None, false).context("selecting sketch distance")?;
@@ -173,13 +200,23 @@ fn sparse_sketch_accessory(
     sketches: &MultiSketch,
     names: Vec<String>,
     k: usize,
+    distance_options: &DistanceOptions,
 ) -> Result<SparseDistances> {
     let n = names.len();
     let dist_type = distances::set_k(sketches, None, false).context("selecting sketch distance")?;
     let mut writer = SketchAccessoryWriter::new(names.clone(), k);
-    distances::self_dists_all_stream(&mut writer, sketches, n, dist_type, true, None, 0.0, 1)
-        .map_err(|error| anyhow!(error))
-        .context("streaming sketch accessory distances")?;
+    distances::self_dists_all_stream(
+        &mut writer,
+        sketches,
+        n,
+        dist_type,
+        true,
+        None,
+        0.0,
+        distance_options.threads,
+    )
+    .map_err(|error| anyhow!(error))
+    .context("streaming sketch accessory distances")?;
     let candidates = writer.finish();
     let rows = candidates
         .into_iter()

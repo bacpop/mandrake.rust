@@ -7,31 +7,36 @@ use std::io::Read;
 use std::path::Path;
 
 use super::{
-    SparseDistances, Sparsification, flatten_rows, jaccard_distance, select_distance_row,
-    validate_sparsification,
+    DistanceOptions, SparseDistances, flatten_rows, jaccard_distance, select_distance_row,
+    validate_distance_options, with_pool,
 };
 
 /// Calculate Jaccard distances from an already-decompressed binary Roary-style
 /// `.Rtab` reader.
 pub fn accessory_distances_from_reader<R: Read>(
     reader: R,
-    sparsification: Sparsification,
+    options: &DistanceOptions,
 ) -> Result<SparseDistances> {
-    validate_sparsification(sparsification)?;
+    validate_distance_options(options)?;
     let (names, columns) = read_accessory_table(reader)?;
     let n = names.len();
-    let rows = (0..n)
-        .into_par_iter()
-        .map(|i| {
-            let mut candidates = Vec::with_capacity(n.saturating_sub(1));
-            for j in 0..n {
-                if i != j {
-                    candidates.push((j, jaccard_distance(&columns[i], &columns[j])));
+    let progress = super::distance_progress(options, n);
+    let rows = with_pool(options.threads, || {
+        (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let mut candidates = Vec::with_capacity(n.saturating_sub(1));
+                for j in 0..n {
+                    if i != j {
+                        candidates.push((j, jaccard_distance(&columns[i], &columns[j])));
+                    }
                 }
-            }
-            select_distance_row(i, candidates, sparsification)
-        })
-        .collect();
+                progress.inc(1);
+                select_distance_row(i, candidates, options.sparsification)
+            })
+            .collect::<Vec<_>>()
+    })?;
+    progress.finish(None);
     let (rows, columns, distances) = flatten_rows(rows);
     SparseDistances::new(names, rows, columns, distances)
 }
@@ -40,15 +45,15 @@ pub fn accessory_distances_from_reader<R: Read>(
 #[cfg(feature = "native-inputs")]
 pub fn accessory_distances<P: AsRef<Path>>(
     path: P,
-    sparsification: Sparsification,
+    options: &DistanceOptions,
 ) -> Result<SparseDistances> {
     let path = path.as_ref();
     let file =
         File::open(path).with_context(|| format!("opening accessory table {}", path.display()))?;
     if path.extension().is_some_and(|extension| extension == "bz2") {
-        accessory_distances_from_reader(bzip2::read::BzDecoder::new(file), sparsification)
+        accessory_distances_from_reader(bzip2::read::BzDecoder::new(file), options)
     } else {
-        accessory_distances_from_reader(file, sparsification)
+        accessory_distances_from_reader(file, options)
     }
 }
 

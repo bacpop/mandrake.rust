@@ -7,7 +7,8 @@ edition = "2024"
 default = ["native-inputs", "sketchlib", "cli"]
 native-inputs = ["dep:bzip2", "needletail/compression"]
 sketchlib = ["dep:sketchlib"]
-cli = ["native-inputs", "sketchlib", "dep:clap", "dep:env_logger", "dep:indicatif"]
+progress = ["dep:indicatif"]
+cli = ["native-inputs", "sketchlib", "dep:clap", "dep:env_logger", "progress"]
 
 [dependencies]
 anyhow = "1"

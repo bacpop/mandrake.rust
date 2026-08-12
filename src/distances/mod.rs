@@ -1,5 +1,6 @@
 //! Sparse distance construction for supported Mandrake input formats.
 
+use crate::progress::PhaseProgress;
 use anyhow::{Result, bail};
 
 mod accessory;
@@ -32,6 +33,28 @@ pub struct SparseDistances {
     pub columns: Vec<u64>,
     /// Normalized distances corresponding to `rows` and `columns`.
     pub distances: Vec<f64>,
+}
+
+/// Common configuration for every distance constructor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DistanceOptions {
+    /// Which source-specific edges to retain.
+    pub sparsification: Sparsification,
+    /// Number of native Rayon threads used for row-wise construction.
+    /// Wasm accepts this value but executes sequentially.
+    pub threads: usize,
+    /// Suppress native distance-construction progress bars.
+    pub quiet: bool,
+}
+
+impl Default for DistanceOptions {
+    fn default() -> Self {
+        Self {
+            sparsification: Sparsification::Knn(0),
+            threads: 1,
+            quiet: false,
+        }
+    }
 }
 
 impl SparseDistances {
@@ -127,6 +150,38 @@ pub(crate) fn validate_sparsification(sparsification: Sparsification) -> Result<
         bail!("distance threshold must be finite and in [0, 1]");
     }
     Ok(())
+}
+
+pub(crate) fn validate_distance_options(options: &DistanceOptions) -> Result<()> {
+    if options.threads == 0 {
+        bail!("threads must be greater than zero");
+    }
+    validate_sparsification(options.sparsification)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn with_pool<T, F>(threads: usize, operation: F) -> Result<T>
+where
+    T: Send,
+    F: FnOnce() -> T + Send,
+{
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .map_err(anyhow::Error::from)?;
+    Ok(pool.install(operation))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn with_pool<T, F>(_: usize, operation: F) -> Result<T>
+where
+    F: FnOnce() -> T,
+{
+    Ok(operation())
+}
+
+pub(crate) fn distance_progress(options: &DistanceOptions, length: usize) -> PhaseProgress {
+    PhaseProgress::new(length as u64, options.quiet, "Distances")
 }
 
 pub(crate) fn select_alignment_row(

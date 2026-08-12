@@ -14,11 +14,12 @@ fn graph() -> EmbeddingInput {
 fn options() -> WtsneOptions {
     WtsneOptions {
         perplexity: 2.0,
-        max_iterations: 20,
+        max_updates: 20,
         repulsion_samples: 1,
         learning_rate: 1.0,
         initial_exaggeration: false,
-        workers: 1,
+        threads: 1,
+        quiet: true,
         seed: 42,
     }
 }
@@ -31,9 +32,10 @@ fn input_moves_owned_data_and_creates_uniform_weights() {
         EmbeddingOperation::new(
             input,
             &WtsneOptions {
-                max_iterations: 1,
+                max_updates: 1,
                 repulsion_samples: 1,
-                workers: 1,
+                threads: 1,
+                quiet: true,
                 ..WtsneOptions::default()
             }
         )
@@ -48,17 +50,17 @@ fn operation_exposes_initial_state_and_lifecycle_progress() {
     assert!(operation.embedding().iter().all(|value| value.is_finite()));
 
     let initial = operation.advance(0);
-    assert_eq!(initial.completed_iterations(), 0);
-    assert_eq!(initial.max_iterations(), 20);
+    assert_eq!(initial.completed_updates(), 0);
+    assert_eq!(initial.max_updates(), 20);
     assert!(!initial.is_complete());
 
     let partial = operation.advance(5);
-    assert_eq!(partial.completed_iterations(), 5);
+    assert_eq!(partial.completed_updates(), 5);
     assert!(!partial.is_complete());
     assert!(partial.eq().is_finite());
 
     let complete = operation.advance(usize::MAX);
-    assert_eq!(complete.completed_iterations(), 20);
+    assert_eq!(complete.completed_updates(), 20);
     assert!(complete.is_complete());
     assert!(operation.embedding().iter().all(|value| value.is_finite()));
 
@@ -74,14 +76,14 @@ fn blocking_wrapper_returns_finite_two_dimensional_embedding() {
 }
 
 #[test]
-fn fixed_seed_is_reproducible_with_one_worker() {
+fn fixed_seed_is_reproducible_with_one_thread() {
     let first = wtsne(graph(), &options()).unwrap();
     let second = wtsne(graph(), &options()).unwrap();
     assert_eq!(first, second);
 }
 
 #[test]
-fn budget_partitioning_preserves_one_worker_result() {
+fn budget_partitioning_preserves_one_thread_result() {
     let mut single_budget = EmbeddingOperation::new(graph(), &options()).unwrap();
     single_budget.advance(20);
     let single = single_budget.into_embedding();
@@ -98,13 +100,28 @@ fn budget_partitioning_preserves_one_worker_result() {
 #[test]
 fn changing_seed_changes_reproducible_embedding() {
     let mut baseline = options();
-    baseline.max_iterations = 1;
+    baseline.max_updates = 1;
     let mut changed = baseline.clone();
     changed.seed += 1;
     assert_ne!(
         wtsne(graph(), &baseline).unwrap(),
         wtsne(graph(), &changed).unwrap()
     );
+}
+
+#[test]
+fn parallel_rounds_complete_within_one_thread_batch_of_target() {
+    let mut options = options();
+    options.threads = 4;
+    options.max_updates = 10;
+    let mut operation = EmbeddingOperation::new(graph(), &options).unwrap();
+    let progress = operation.advance(1);
+    assert_eq!(progress.completed_updates(), 4);
+    let progress = operation.advance(usize::MAX);
+    assert!(progress.is_complete());
+    assert!(progress.completed_updates() >= options.max_updates);
+    assert!(progress.completed_updates() < options.max_updates + options.threads);
+    assert!(operation.embedding().iter().all(|value| value.is_finite()));
 }
 
 #[test]

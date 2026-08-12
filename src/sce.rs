@@ -8,13 +8,14 @@ use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::api::{EmbeddingInput, EmbeddingProgress, WtsneOptions};
+use crate::progress::PhaseProgress;
 
 type Xoshiro = Xoshiro256PlusPlus;
 
 const DIMENSIONS: usize = 2;
 const PROBABILITY_TOLERANCE: f64 = 1e-5;
 const PERPLEXITY_STEPS: usize = 100;
-const WORKER_STREAM_DOMAIN: u64 = 0x4d41_4e44_5241_4b45;
+const UPDATE_STREAM_DOMAIN: u64 = 0x5550_4441_5445_5354;
 const INITIAL_STREAM_DOMAIN: u64 = 0x5343_455f_494e_4954;
 const STREAM_MULTIPLIER: u64 = 0x9e37_79b9_7f4a_7c15;
 
@@ -29,7 +30,17 @@ fn next_unit(rng: &mut Xoshiro) -> f64 {
     rng.next_u64() as f64 / 18_446_744_073_709_551_616.0
 }
 
-/// Run one embedding calculation to its configured iteration limit.
+fn update_rng_streams(seed: u64, threads: usize) -> Vec<Xoshiro> {
+    let mut root = seeded_rng(seed, UPDATE_STREAM_DOMAIN, 0);
+    let mut streams = Vec::with_capacity(threads);
+    for _ in 0..threads {
+        streams.push(root.clone());
+        root.jump();
+    }
+    streams
+}
+
+/// Run one embedding calculation to its configured update target.
 pub fn wtsne(input: EmbeddingInput, options: &WtsneOptions) -> Result<Array2<f64>> {
     let mut operation = EmbeddingOperationInner::new(input, options)?;
     operation.advance(usize::MAX);
@@ -46,12 +57,14 @@ pub(crate) struct EmbeddingOperationInner {
     columns: Vec<u64>,
     rng_states: Vec<Xoshiro>,
     n_nodes: usize,
-    max_iterations: usize,
-    completed_iterations: usize,
+    max_updates: usize,
+    completed_updates: usize,
+    threads: usize,
     repulsion_samples: usize,
     learning_rate: f64,
     initial_exaggeration: bool,
     eq: f64,
+    optimization_progress: PhaseProgress,
     #[cfg(not(target_arch = "wasm32"))]
     pool: rayon::ThreadPool,
 }
@@ -63,17 +76,36 @@ impl EmbeddingOperationInner {
             bail!("at least one COO edge is required");
         }
 
-        let row_edges = make_row_edges(&input.rows, input.n_nodes);
-        let probabilities =
-            conditional_probabilities(&row_edges, &input.distances, options.perplexity)?;
-        let edge_table = AliasTable::new(&probabilities).context("building edge sampler")?;
-        let node_table = AliasTable::new(&input.weights).context("building node sampler")?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let threads = options.threads;
+        #[cfg(target_arch = "wasm32")]
+        let threads = 1;
 
         #[cfg(not(target_arch = "wasm32"))]
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(options.workers)
+            .num_threads(options.threads)
             .build()
             .context("building Rayon thread pool")?;
+
+        let row_edges = make_row_edges(&input.rows, input.n_nodes);
+        #[cfg(not(target_arch = "wasm32"))]
+        let probabilities = pool.install(|| {
+            conditional_probabilities(
+                &row_edges,
+                &input.distances,
+                options.perplexity,
+                options.quiet,
+            )
+        })?;
+        #[cfg(target_arch = "wasm32")]
+        let probabilities = conditional_probabilities(
+            &row_edges,
+            &input.distances,
+            options.perplexity,
+            options.quiet,
+        )?;
+        let edge_table = AliasTable::new(&probabilities).context("building edge sampler")?;
+        let node_table = AliasTable::new(&input.weights).context("building node sampler")?;
 
         #[cfg(not(target_arch = "wasm32"))]
         let initial = initial_embedding(input.n_nodes, options.seed, &pool);
@@ -84,9 +116,7 @@ impl EmbeddingOperationInner {
             Array2::from_shape_vec((input.n_nodes, DIMENSIONS), initial.clone())
                 .expect("initial embedding has the expected shape");
         let embedding = AtomicEmbedding::new(initial);
-        let rng_states = (0..options.workers)
-            .map(|worker| seeded_rng(options.seed, WORKER_STREAM_DOMAIN, worker as u64))
-            .collect();
+        let rng_states = update_rng_streams(options.seed, threads);
 
         Ok(Self {
             embedding,
@@ -97,22 +127,38 @@ impl EmbeddingOperationInner {
             columns: input.columns,
             rng_states,
             n_nodes: input.n_nodes,
-            max_iterations: options.max_iterations,
-            completed_iterations: 0,
+            max_updates: options.max_updates,
+            completed_updates: 0,
+            threads,
             repulsion_samples: options.repulsion_samples,
             learning_rate: options.learning_rate,
             initial_exaggeration: options.initial_exaggeration,
             eq: 1.0,
+            optimization_progress: PhaseProgress::new(
+                options.max_updates as u64,
+                options.quiet,
+                "Optimizing",
+            ),
             #[cfg(not(target_arch = "wasm32"))]
             pool,
         })
     }
 
-    pub(crate) fn advance(&mut self, iteration_budget: usize) -> EmbeddingProgress {
-        let remaining = self.max_iterations - self.completed_iterations;
-        let iterations = iteration_budget.min(remaining);
-        for _ in 0..iterations {
-            self.advance_one();
+    pub(crate) fn advance(&mut self, round_budget: usize) -> EmbeddingProgress {
+        if round_budget == 0 || self.is_complete() {
+            return self.progress();
+        }
+        let remaining = self.max_updates.saturating_sub(self.completed_updates);
+        let rounds_needed = remaining.div_ceil(self.threads);
+        let rounds = round_budget.min(rounds_needed);
+        for _ in 0..rounds {
+            self.advance_round();
+        }
+        if self.is_complete() {
+            self.optimization_progress.finish(Some(format!(
+                "completed {} updates (target {})",
+                self.completed_updates, self.max_updates
+            )));
         }
         self.progress()
     }
@@ -122,32 +168,36 @@ impl EmbeddingOperationInner {
     }
 
     pub(crate) fn into_embedding(self) -> Array2<f64> {
-        if self.completed_iterations != self.max_iterations {
+        if !self.is_complete() {
             log::warn!(
-                "consuming incomplete embedding operation after {}/{} iterations",
-                self.completed_iterations,
-                self.max_iterations
+                "consuming incomplete embedding operation after {}/{} updates",
+                self.completed_updates,
+                self.max_updates
             );
         }
         self.current_embedding
     }
 
     fn progress(&self) -> EmbeddingProgress {
-        EmbeddingProgress::new(self.completed_iterations, self.max_iterations, self.eq)
+        EmbeddingProgress::new(self.completed_updates, self.max_updates, self.eq)
     }
 
-    fn advance_one(&mut self) {
-        let iteration = self.completed_iterations;
-        let eta = (self.learning_rate * (1.0 - iteration as f64 / self.max_iterations as f64))
+    fn is_complete(&self) -> bool {
+        self.completed_updates >= self.max_updates
+    }
+
+    fn advance_round(&mut self) {
+        let update = self.completed_updates;
+        let eta = (self.learning_rate * (1.0 - update as f64 / self.max_updates as f64))
             .max(self.learning_rate * 1e-4);
-        let attraction_coefficient =
-            if self.initial_exaggeration && iteration < self.max_iterations / 10 {
-                8.0
-            } else {
-                2.0
-            };
+        let attraction_coefficient = if self.initial_exaggeration && update < self.max_updates / 10
+        {
+            8.0
+        } else {
+            2.0
+        };
         let repulsion_coefficient = 2.0 / (self.eq * self.repulsion_samples as f64);
-        let context = WorkerContext {
+        let context = UpdateContext {
             embedding: &self.embedding,
             edge_table: &self.edge_table,
             node_table: &self.node_table,
@@ -162,13 +212,17 @@ impl EmbeddingOperationInner {
         let (qsum, qcount, _) = {
             let pool = &self.pool;
             let rng_states = &mut self.rng_states;
-            pool.install(|| run_workers(rng_states, &context))
+            pool.install(|| run_updates(rng_states, &context))
         };
         #[cfg(target_arch = "wasm32")]
-        let (qsum, qcount, _) = run_workers(&mut self.rng_states, &context);
+        let (qsum, qcount, _) = run_updates(&mut self.rng_states, &context);
         let n_squared = self.n_nodes as f64 * (self.n_nodes - 1) as f64;
         self.eq = (self.eq * n_squared + qsum) / (n_squared + qcount as f64);
-        self.completed_iterations += 1;
+        self.completed_updates = self.completed_updates.saturating_add(self.threads);
+        self.optimization_progress
+            .set(self.completed_updates.min(self.max_updates) as u64, || {
+                format!("Eq={:.6}", self.eq)
+            });
         self.embedding.copy_into(&mut self.current_embedding);
     }
 }
@@ -177,14 +231,14 @@ fn validate_options(options: &WtsneOptions) -> Result<()> {
     if !options.perplexity.is_finite() {
         bail!("perplexity must be finite");
     }
-    if options.max_iterations == 0 {
-        bail!("max_iterations must be greater than zero");
+    if options.max_updates == 0 {
+        bail!("max_updates must be greater than zero");
     }
     if options.repulsion_samples == 0 {
         bail!("repulsion_samples must be greater than zero");
     }
-    if options.workers == 0 {
-        bail!("workers must be greater than zero");
+    if options.threads == 0 {
+        bail!("threads must be greater than zero");
     }
     if !options.learning_rate.is_finite() || options.learning_rate <= 0.0 {
         bail!("learning_rate must be finite and positive");
@@ -204,12 +258,18 @@ fn conditional_probabilities(
     rows: &[Vec<usize>],
     distances: &[f64],
     perplexity: f64,
+    quiet: bool,
 ) -> Result<Vec<f64>> {
     let mut probabilities = vec![0.0; distances.len()];
+    let progress = PhaseProgress::new(distances.len() as u64, quiet, "Probabilities");
     if perplexity <= 0.0 {
-        for (index, &distance) in distances.iter().enumerate() {
-            probabilities[index] = 1.0 - distance;
-        }
+        probabilities
+            .par_iter_mut()
+            .zip(distances.par_iter())
+            .for_each(|(probability, &distance)| {
+                *probability = 1.0 - distance;
+                progress.inc(1);
+            });
     } else {
         let desired_entropy = perplexity.ln();
         let row_probabilities: Vec<Vec<f64>> = rows
@@ -251,7 +311,7 @@ fn conditional_probabilities(
                         };
                     } else {
                         beta_max = beta;
-                        beta = if beta_min == -f64::MIN {
+                        beta = if beta_min == -f64::MAX {
                             beta * 0.5
                         } else {
                             (beta + beta_min) * 0.5
@@ -259,6 +319,7 @@ fn conditional_probabilities(
                     }
                 }
 
+                progress.inc(row.len() as u64);
                 row_probabilities
             })
             .collect();
@@ -374,7 +435,7 @@ fn initialise_embedding(values: &mut [f64], seed: u64) {
         });
 }
 
-struct WorkerContext<'a> {
+struct UpdateContext<'a> {
     embedding: &'a AtomicEmbedding,
     edge_table: &'a AliasTable,
     node_table: &'a AliasTable,
@@ -386,17 +447,17 @@ struct WorkerContext<'a> {
     repulsion_samples: usize,
 }
 
-fn run_workers(rng_states: &mut [Xoshiro], context: &WorkerContext<'_>) -> (f64, u64, u64) {
+fn run_updates(rng_states: &mut [Xoshiro], context: &UpdateContext<'_>) -> (f64, u64, u64) {
     rng_states
         .par_iter_mut()
-        .map(|rng| run_worker(rng, context))
+        .map(|rng| run_update(rng, context))
         .reduce(
             || (0.0, 0_u64, 0_u64),
             |left, right| (left.0 + right.0, left.1 + right.1, left.2 + right.2),
         )
 }
 
-fn run_worker(rng: &mut Xoshiro, context: &WorkerContext<'_>) -> (f64, u64, u64) {
+fn run_update(rng: &mut Xoshiro, context: &UpdateContext<'_>) -> (f64, u64, u64) {
     let edge = context.edge_table.draw(rng);
     let attraction_i = context.rows[edge] as usize;
     let attraction_j = context.columns[edge] as usize;

@@ -9,57 +9,63 @@ use std::path::Path;
 
 use super::bitvecs::SampleBases;
 use super::{
-    SparseDistances, Sparsification, flatten_rows, select_alignment_row, validate_sparsification,
+    DistanceOptions, SparseDistances, flatten_rows, select_alignment_row,
+    validate_distance_options, with_pool,
 };
 
 /// Calculate normalized pair-SNP distances from an already-decompressed FASTA
 /// or FASTQ reader.
 pub fn pair_snp_distances_from_reader<R: Read + Send>(
     reader: R,
-    sparsification: Sparsification,
+    options: &DistanceOptions,
 ) -> Result<SparseDistances> {
-    validate_sparsification(sparsification)?;
+    validate_distance_options(options)?;
     let mut reader = parse_fastx_reader(reader).map_err(|error| anyhow!(error))?;
     let (names, sequences, alignment_len) = read_alignment(&mut *reader)?;
-    pair_snp_distances_from_alignment(names, sequences, alignment_len, sparsification)
+    pair_snp_distances_from_alignment(names, sequences, alignment_len, options)
 }
 
 /// Calculate normalized pair-SNP distances from a native path.
 #[cfg(feature = "native-inputs")]
 pub fn pair_snp_distances<P: AsRef<Path>>(
     path: P,
-    sparsification: Sparsification,
+    options: &DistanceOptions,
 ) -> Result<SparseDistances> {
     let path = path.as_ref();
     let mut reader = parse_fastx_file(path)
         .map_err(|error| anyhow!(error))
         .with_context(|| format!("opening alignment {}", path.display()))?;
-    validate_sparsification(sparsification)?;
+    validate_distance_options(options)?;
     let (names, sequences, alignment_len) = read_alignment(&mut *reader)?;
-    pair_snp_distances_from_alignment(names, sequences, alignment_len, sparsification)
+    pair_snp_distances_from_alignment(names, sequences, alignment_len, options)
 }
 
 fn pair_snp_distances_from_alignment(
     names: Vec<String>,
     sequences: Vec<SampleBases>,
     alignment_len: usize,
-    sparsification: Sparsification,
+    options: &DistanceOptions,
 ) -> Result<SparseDistances> {
     let n = names.len();
-    let rows = (0..n)
-        .into_par_iter()
-        .map(|i| {
-            let mut comparisons = Vec::with_capacity(n);
-            for j in 0..n {
-                let matches = sequences[i].matching_sites(&sequences[j]).len() as usize;
-                let gaps = sequences[i].either_gap_sites(&sequences[j]).len() as usize;
-                let comparable = alignment_len.saturating_sub(gaps);
-                let mismatches = comparable.saturating_sub(matches);
-                comparisons.push((j, mismatches));
-            }
-            select_alignment_row(i, comparisons, alignment_len, sparsification)
-        })
-        .collect();
+    let progress = super::distance_progress(options, n);
+    let rows = with_pool(options.threads, || {
+        (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let mut comparisons = Vec::with_capacity(n);
+                for j in 0..n {
+                    let matches = sequences[i].matching_sites(&sequences[j]).len() as usize;
+                    let gaps = sequences[i].either_gap_sites(&sequences[j]).len() as usize;
+                    let comparable = alignment_len.saturating_sub(gaps);
+                    let mismatches = comparable.saturating_sub(matches);
+                    comparisons.push((j, mismatches));
+                }
+                progress.inc(1);
+                select_alignment_row(i, comparisons, alignment_len, options.sparsification)
+            })
+            .collect::<Vec<_>>()
+    })?;
+    progress.finish(None);
     let (rows, columns, distances) = flatten_rows(rows);
     SparseDistances::new(names, rows, columns, distances)
 }

@@ -1,9 +1,8 @@
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Parser};
-use indicatif::{ProgressBar, ProgressStyle};
 use mandrake::{
-    EmbeddingInput, EmbeddingOperation, SketchOptions, SparseDistances, Sparsification,
-    WtsneOptions, accessory_distances, pair_snp_distances, sketch_distances,
+    DistanceOptions, EmbeddingInput, EmbeddingOperation, SketchOptions, SparseDistances,
+    Sparsification, WtsneOptions, accessory_distances, pair_snp_distances, sketch_distances,
     sketch_distances_from_fasta_list,
 };
 use std::fs::File;
@@ -50,10 +49,10 @@ struct Args {
     /// Conditional-probability perplexity; non-positive values use raw similarities.
     #[arg(long, default_value_t = 30.0)]
     perplexity: f64,
-    /// Maximum optimisation iterations.
+    /// Target number of stochastic update attempts.
     #[arg(long, default_value_t = 1_000_000)]
-    max_iterations: usize,
-    /// Repulsion samples per worker and iteration.
+    max_updates: usize,
+    /// Repulsion samples per update attempt.
     #[arg(long, default_value_t = 5)]
     repulsion_samples: usize,
     /// Initial learning rate.
@@ -62,9 +61,9 @@ struct Args {
     /// Apply initial attraction exaggeration.
     #[arg(long)]
     initial_exaggeration: bool,
-    /// Number of optimisation workers.
+    /// Number of native optimisation threads.
     #[arg(long, default_value_t = 1)]
-    workers: usize,
+    threads: usize,
     /// Random seed.
     #[arg(long, default_value_t = 1)]
     seed: u64,
@@ -85,40 +84,30 @@ pub fn run() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
     let sparsification = parse_sparsification(&args)?;
-    let distances = build_distances(&args, sparsification)?;
+    let distance_options = DistanceOptions {
+        sparsification,
+        threads: args.threads,
+        quiet: args.quiet,
+    };
+    let distances = build_distances(&args, &distance_options)?;
     let (names, rows, columns, values) = distances.into_parts();
     let input = EmbeddingInput::new(rows, columns, values, names.len(), None)?;
     let options = WtsneOptions {
         perplexity: args.perplexity,
-        max_iterations: args.max_iterations,
+        max_updates: args.max_updates,
         repulsion_samples: args.repulsion_samples,
         learning_rate: args.learning_rate,
         initial_exaggeration: args.initial_exaggeration,
-        workers: args.workers,
+        threads: args.threads,
+        quiet: args.quiet,
         seed: args.seed,
     };
     let mut operation = EmbeddingOperation::new(input, &options).context("running wtsne")?;
-    let progress = (!args.quiet).then(|| {
-        let bar = ProgressBar::new(options.max_iterations as u64);
-        let style = ProgressStyle::with_template(
-            "Optimizing [{bar:40.cyan/blue}] {pos}/{len} status={msg}",
-        )
-        .unwrap_or_else(|_| ProgressStyle::default_bar());
-        bar.set_style(style);
-        bar
-    });
     loop {
         let status = operation.advance(CLI_ADVANCE_CHUNK);
-        if let Some(bar) = &progress {
-            bar.set_position(status.completed_iterations() as u64);
-            bar.set_message(format!("Eq={:.6}", status.eq()));
-        }
         if status.is_complete() {
             break;
         }
-    }
-    if let Some(bar) = progress {
-        bar.finish_and_clear();
     }
     write_outputs(&args.output, &names, operation.embedding())?;
     Ok(())
@@ -136,32 +125,32 @@ fn parse_sparsification(args: &Args) -> Result<Sparsification> {
     }
 }
 
-fn build_distances(args: &Args, sparsification: Sparsification) -> Result<SparseDistances> {
+fn build_distances(args: &Args, options: &DistanceOptions) -> Result<SparseDistances> {
     match (&args.alignment, &args.accessory, &args.sketches) {
-        (Some(path), None, None) => pair_snp_distances(path, sparsification),
+        (Some(path), None, None) => pair_snp_distances(path, options),
         (None, Some(path), None) => {
             if args.use_accessory {
                 bail!("--use-accessory is only valid with --sketches")
             }
-            accessory_distances(path, sparsification)
+            accessory_distances(path, options)
         }
         (None, None, Some(path)) => {
-            if matches!(sparsification, Sparsification::Threshold(_)) {
+            if matches!(options.sparsification, Sparsification::Threshold(_)) {
                 bail!("threshold sparsification is not supported for sketch inputs; use --knn")
             }
-            let options = SketchOptions {
+            let sketch_options = SketchOptions {
                 kmer_sizes: vec![args.sketch_kmer],
                 sketch_size: args.sketch_size,
             };
             if sketch_prefix_exists(path) {
-                sketch_distances(path, sparsification, args.use_accessory)
+                sketch_distances(path, options, args.use_accessory)
             } else {
                 let files = read_fasta_list(path)?;
                 sketch_distances_from_fasta_list(
                     &files,
-                    sparsification,
+                    options,
                     args.use_accessory,
-                    &options,
+                    &sketch_options,
                 )
             }
         }

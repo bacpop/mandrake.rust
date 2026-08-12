@@ -89,39 +89,40 @@ Expose:
 
 ## Objective
 
-Replace retained `SceResults` animation frames with a wasm32-compatible async
-embedding interface that callers can poll for the current embedding state.
-
-Before code changes, this task updates this plan. Before finishing, it records
-completed milestones, design decisions, verification, blockers, and the next
-task here.
+Implement the confirmed worker-model cleanup: replace explicit logical workers
+in the main SCE optimiser with parallel update rounds, expose one cross-platform
+thread setting, retain atomic updates, add persistent jumped RNG streams,
+distance options, and native phase progress bars.
 
 ### Checklist
 
-- [x] Update the plan with the wasm/async scope and remove superseded follow-up work
-- [x] Resolve the public async API, polling contract, and lifecycle semantics
-- [x] Define wasm32-compatible execution and scheduling constraints
-- [x] Remove retained animation-frame types and implementation
-- [x] Implement the async, pollable embedding API
-- [x] Add focused lifecycle, polling, and final-result coverage
-- [x] Verify native and `wasm32-unknown-unknown` builds, focused tests, formatting, lint, documentation, and diff checks
-- [x] Update this plan at completion with status, decisions, blockers, log, and next task
+- [x] Record the confirmed worker-model design in the plan and domain docs
+- [x] Replace worker configuration/API with `threads`, `max_updates`, and `quiet`
+- [x] Replace worker execution with persistent RNG-backed parallel rounds
+- [x] Scope Rayon pools for SCE, probabilities, and distance constructors
+- [x] Add native phase progress bars and shared `DistanceOptions`
+- [x] Update focused API, distance, CLI, and wasm coverage
+- [x] Verify native/wasm builds, tests, formatting, lint, docs, and diff checks
+- [x] Update this plan with implementation status, decisions, blockers, log, and next task
 
 ### Current Status
 
 Working on:
 
-The wasm/async API transition is complete. The library has a synchronous,
-cooperatively advanced operation, and the wasm library build is feature-free.
+The worker-model cleanup is complete. The public API, native parallel rounds,
+distance options, progress phases, and portable wasm build all reflect the
+confirmed design.
 
 Last verified:
 
-2026-08-11: `cargo test --all-targets --offline` (23 tests),
+2026-08-12: `cargo test --all-targets --offline` (24 tests),
+`cargo test --no-default-features --lib --offline`,
 `cargo build --all-targets --offline`, `cargo doc --no-deps --offline`,
-`cargo fmt --all`, `cargo clippy --all-targets --offline -- -D warnings`,
+`cargo fmt --all -- --check`, `cargo clippy --all-targets --offline -- -D warnings`,
 `cargo clippy --lib --no-default-features --offline -- -D warnings`,
 `cargo check --lib --no-default-features --target wasm32-unknown-unknown
---offline`, and `git diff --check` pass.
+--offline`, `cargo run --offline -- --help`, the focused accessory CLI
+integration test, and `git diff --check` pass.
 
 Blockers:
 
@@ -136,22 +137,83 @@ None.
 - Prefer Rayon.
 - Atomic floating-point updates are required for embedding writes; use a CAS
   loop over `AtomicU64` bit patterns and retain the C++ optimistic clash retry.
+- Replace the public `workers` setting with `threads`. `WtsneOptions::threads`
+  and CLI `--threads` default to one and govern every native parallel section:
+  distance construction, conditional probabilities, embedding initialization,
+  and SCE updates. The setting is accepted on wasm for API compatibility, but
+  wasm execution remains sequential and values above one have no effect.
+- A fixed seed guarantees reproducible embeddings only with `threads = 1` and
+  otherwise identical input and options. Multi-threaded SCE updates may vary
+  with scheduling, so their verification targets finite output and intended
+  behaviour rather than equality across thread counts.
+- `max_updates` is a thread-independent total update-attempt target, not a
+  count of parallel rounds. Progress reports completed update attempts. Each
+  internal parallel round performs `threads` attempts. A run may finish up to
+  `threads - 1` attempts above its requested budget rather than execute a final
+  partial round, so thread count changes concurrency and may make total work
+  differ slightly while staying within one thread batch of the target.
+- `EmbeddingOperation::advance` accepts a round budget, not a literal update
+  count: each non-zero round performs one full native thread batch. A zero
+  budget remains a no-op poll. This keeps cooperative polling live without
+  requiring partial batches.
+- Make the unit distinction explicit in the public API: rename the configured
+  and reported fields/accessors to `max_updates` and `completed_updates`.
+  `advance` is documented as accepting parallel rounds. This is an intentional
+  clean API break that prevents callers from treating progress units and
+  advance units as interchangeable.
+- Each native `EmbeddingOperation` owns a Rayon pool configured by `threads`.
+  Run its construction-time conditional-probability and initialization work in
+  that pool. Do not configure Rayon globally: repeated operations must remain
+  valid. Wasm retains Rayon's sequential fallback.
+- Expose an explicit thread setting to every public distance constructor and
+  CLI distance-loading path through `DistanceOptions`. It contains
+  `sparsification`, `threads`, and `quiet`, defaults to `Knn(0)`, one thread,
+  and progress enabled, and is shared by every public distance constructor.
+  Each native call creates and uses a per-call configured Rayon pool, so
+  distance construction shares the one-setting contract without process-global
+  state.
+- Public native distance constructors and embedding configuration expose a
+  `quiet` option, defaulting to false. When it is false, library callers
+  receive one `indicatif` phase bar at a time for distance construction,
+  conditional-probability
+  preprocessing, and optimisation; when true, those bars are suppressed.
+  Structured operation progress remains available independently, and wasm
+  remains terminal-bar-free.
+- The optimisation bar has length `max_updates`, caps its visual position at
+  that target, and reports the actual completed-update count on finish. This
+  accommodates a final full thread batch that may exceed the target.
+- Keep the existing atomic-CAS embedding updates and optimistic clash retry for
+  concurrent SCE updates. Do not introduce per-thread full-embedding delta
+  buffers and a reduction step: their `O(nodes * threads)` peak memory cost
+  conflicts with Mandrake's memory-efficiency priority and would change the
+  in-place update semantics.
+- Sketchlib's streaming accessory API needs a coordinator lane while its
+  producer is running inside a scoped Rayon pool, so a single-thread accessory
+  call uses a two-lane private pool while still passing the requested thread
+  count to sketchlib's distance workers.
+- The progress implementation is behind a positive `progress` feature enabled
+  by the native CLI/default feature set. `quiet` remains in the public options
+  on feature-free and wasm builds, where the bar implementation is a no-op.
 
 ## RNG
 
 - Use `rand_xoshiro::Xoshiro256PlusPlus` through its `RngCore` and
   `SeedableRng` interfaces.
-- Derive independent domain-separated `seed_from_u64` streams from the
-  configured seed for each logical worker and each initial embedding point.
+- Initialize a root, domain-separated update RNG once from the configured
+  seed. Create the small fixed set of executor streams by successive
+  `Xoshiro256PlusPlus::jump()` calls, then retain and advance those streams
+  normally. Never reseed per update or repeatedly jump from the initial state
+  to catch up with progress.
+- Retain domain-separated `seed_from_u64` streams for initial embedding points.
 - Preserve same-seed reproducibility, but intentionally do not preserve the
   previous manual-generator embedding values; this is a clean seeded-output
   compatibility break chosen for the phase.
 
 ## Progress
 
-The library returns `EmbeddingProgress` from each synchronous advance. The
-native CLI renders that status with indicatif; the portable core owns no
-terminal or UI renderer.
+The library returns `EmbeddingProgress` from each synchronous advance. Native
+library and CLI callers may enable one phase-specific `indicatif` bar at a time
+through their `quiet` options; the portable wasm core owns no terminal UI.
 
 ## Conditional probabilities
 
@@ -166,15 +228,16 @@ Port implementation from `wtsne.hpp`.
   weights.
 - `wtsne(...)` returns `Result<Array2<f64>>`; the embedding has shape
   `(n_nodes, 2)`.
-- `WtsneOptions` carries perplexity, iteration count, repulsion samples,
-  learning rate, initial exaggeration, worker count, and seed. Retained frame
-  schedules and library-owned progress rendering are removed.
+- `WtsneOptions` carries perplexity, target update count, repulsion samples,
+  learning rate, initial exaggeration, thread count, quiet setting, and seed.
+  Retained frame schedules are removed; native progress bars are controlled by
+  the quiet setting.
 - Tests target public behavior: validation, normalization, finite output,
-  reproducibility for one worker, and successful parallel execution.
+  reproducibility for one thread, and successful parallel execution.
 - No Python bindings or CUDA are part of this milestone.
-- Distance constructors return `SparseDistances` and accept
-  `Sparsification::Knn` or `Sparsification::Threshold` where the source
-  supports that mode.
+- Distance constructors return `SparseDistances` and accept `DistanceOptions`,
+  whose sparsification field supports `Sparsification::Knn` or
+  `Sparsification::Threshold` where the source supports that mode.
 
 ## Distance-input phase decisions
 
@@ -214,12 +277,12 @@ Port implementation from `wtsne.hpp`.
   source dispatch, embedding invocation, and output writing move to `cli.rs`.
 - The public interface is tested through root re-exports and CLI behaviour;
   internal seams remain private implementation details.
-- The clean RNG migration derives worker seeds from
-  `seed + WORKER_STREAM_DOMAIN + index * STREAM_MULTIPLIER` and initial-point
-  seeds from the analogous `INITIAL_STREAM_DOMAIN` stream. Unit sampling uses
-  the full-width `next_u64` output over `[0, 1)`. This retains deterministic
-  same-seed runs while intentionally changing fixed-seed embedding values from
-  the former hand-written xoshiro128+ implementation.
+- The initial embedding uses domain-separated per-point RNG seeds. SCE update
+  streams are persistent disjoint Xoshiro streams created once from a root
+  stream with `jump()`, never reseeded or replayed to catch up. Unit sampling
+  uses the full-width `next_u64` output over `[0, 1)`. This retains
+  deterministic single-thread runs while intentionally changing fixed-seed
+  embedding values from the former hand-written xoshiro128+ implementation.
 
 ## Wasm/async API transition
 
@@ -227,13 +290,13 @@ Port implementation from `wtsne.hpp`.
   stepped embedding operation. The caller advances bounded work and may poll
   the current state between steps; this avoids requiring threads, an executor,
   or a particular async runtime on `wasm32-unknown-unknown`.
-- Each advance accepts a caller-selected iteration budget, so UI callers can
+- Each advance accepts a caller-selected parallel-round budget, so UI callers can
   choose short work units while native callers can choose larger batches.
 - `advance` returns lightweight progress/completion metadata. The operation
   retains one current `Array2` embedding, replacing it after every completed
-  iteration; callers retrieve that state through a separate accessor. It never
+  update round; callers retrieve that state through a separate accessor. It never
   retains a historical frame series.
-- The initialized iteration-0 embedding is available through that accessor as
+- The initialized zero-update embedding is available through that accessor as
   soon as the operation is created.
 - Advancing a completed operation is idempotent: it leaves the final embedding
   unchanged and returns completion again rather than reporting an error.
@@ -247,14 +310,14 @@ Port implementation from `wtsne.hpp`.
 - Retain `wtsne` as a blocking convenience wrapper that constructs an operation,
   advances it to completion, and returns only the final embedding. The
   cooperative operation remains the canonical interface.
-- Each advance reports completed iterations, configured maximum iterations, and
-  the `Eq` convergence statistic. Worker-update counts are removed from the
-  public API because workers are not part of the intended long-term model.
-- A zero iteration budget is a valid no-op poll. `Eq` remains diagnostic and
+- Each advance reports completed updates, configured maximum updates, and the
+  `Eq` convergence statistic. Worker-update counts are removed from the public
+  API because workers are not part of the intended long-term model.
+- A zero round budget is a valid no-op poll. `Eq` remains diagnostic and
   must not cause convergence-based early termination.
-- The configured maximum iteration count is the sole terminal limit. An
-  oversized budget performs the remaining iterations and then returns
-  completion.
+- The configured maximum update count is the total-work target. A native run
+  completes full thread batches and can exceed it by at most `threads - 1`;
+  wasm completes exactly at the target.
 - Split distance code into focused files: portable alignment/accessory
   constructors accept caller-provided readers, while path-opening and
   compression wrappers are native-only. Sketchlib-backed constructors are
@@ -286,29 +349,28 @@ Port implementation from `wtsne.hpp`.
 - Per-element validation is limited to debug assertions in distance
   construction. The embedding phase performs only basic non-scanning checks
   and treats its owned numeric input as trusted in release builds.
-- On `wasm32-unknown-unknown`, use Rayon's sequential global fallback rather
-  than an explicit `ThreadPoolBuilder`, which Rayon documents as unsupported
-  on that target. Native builds retain configured pools until the separate
-  worker-model cleanup.
-- Remove the terminal-specific `WtsneOptions::progress` setting. The library
-  reports operation progress only; the native CLI retains its progress display
-  by rendering that reported status itself.
+- On `wasm32-unknown-unknown`, use Rayon's sequential fallback rather than an
+  explicit `ThreadPoolBuilder`, which Rayon documents as unsupported on that
+  target. Native builds retain configured pools per operation or distance call.
+- Native library phases render their own optional progress bars; the CLI passes
+  its quiet setting through and renders no duplicate bars.
 - Make a clean public API break: remove `FrameSchedule`, `SceFrame`, and
   `SceResults`. The retained blocking `wtsne` wrapper consumes `EmbeddingInput`
   and returns `Result<Array2<f64>>`.
-- For this phase, the CLI advances a fixed internal iteration chunk and renders
-  progress after each chunk. Interval-driven rendering from a separate thread
-  is deferred as a non-priority follow-up.
+- For this phase, the CLI advances a fixed internal round chunk while the
+  library optimization phase renders progress after each round. Interval-driven
+  rendering from a separate thread is deferred as a non-priority follow-up.
 - Define that chunk as `const CLI_ADVANCE_CHUNK: usize = 1_000` in the CLI.
-- Advancing with different budget partitions should ideally preserve fixed-seed
-  results, but this is secondary to performance and must not justify added
-  copying, synchronization, or validation overhead.
+- Advancing with different round-budget partitions should ideally preserve
+  fixed-seed single-thread results, but this is secondary to performance and
+  must not justify added copying, synchronization, or validation overhead.
 - Regression coverage checks budget-partition invariance only in the
-  deterministic single-worker path. Multi-worker equivalence is not tested and
-  is deferred with the worker-model removal.
-- Retain `WtsneOptions::workers` temporarily for native implementation behavior;
-  remove it later with the worker-model cleanup. WASM uses sequential
-  execution, and workers do not appear in public progress/status values.
+  deterministic single-thread path. Multi-thread tests assert a completed,
+  finite embedding whose completed work is no more than `threads - 1` above
+  its requested budget; they do not require coordinate equality or an exact
+  final attempt count.
+- There is no public worker concept: `threads` configures native rounds, wasm
+  executes sequentially, and thread count does not appear in progress values.
 - Keep the Rust operation synchronous (`advance(&mut self, budget)`); callers
   provide any async/UI scheduling around it. No executor or `Future` is part of
   this phase.
@@ -316,7 +378,7 @@ Port implementation from `wtsne.hpp`.
   separate `into_embedding()` consumes the operation and transfers the final
   array. Polling does not clone the embedding.
 - `advance` returns one `EmbeddingProgress` struct carrying completed and
-  maximum iteration counts plus `Eq`; completion is queried through
+  maximum update counts plus `Eq`; completion is queried through
   `is_complete()` rather than a separate status enum.
 - `into_embedding()` may consume an incomplete operation and return its latest
   state without copying, but emits a `WARN` log unless the operation has
@@ -332,24 +394,14 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-Start the planned worker-model cleanup: replace explicit logical workers with
-parallel updates in the main loop, retain a single cross-platform thread
-setting, and reassess the atomic update seam.
+Start the planned distance-code efficiency pass: keep row-oriented parallel
+construction, replace full per-row sorting with bounded top-k selection, retain
+threshold filtering during generation, and assess the shared alignment/CSV
+distance seam.
 
 # Further tasks
 
 Tasks for later implementation steps:
-
-- Parallelism tasks:
-  - A single --threads argument which works everywhere. Default to one
-    thread unless otherwise requested.
-  - Parallelise distances and conditional probabilities in line with
-    this guidance
-  - Add indicatif progress bars to these two parallel iterators (but not
-    the main sce algorithm, which already works).
-  - Remove the worker concept in the main SCE algorithm, and instead
-    just allow parallel updates in the main loop. If this simplifies
-    atomic updates let me know in the plan.
 
 - Improvement for dists code (from pairsnp or csv):
   - Refactor: combine dist types (with a trait?), csv just has one bitvec, to keep code paths more similar.
@@ -526,6 +578,65 @@ Verification:
 
 Next session:
 - Start the worker-model cleanup described in the Current Task's Next Task.
+
+Blockers:
+- None.
+
+## 2026-08-12 (worker-model cleanup design)
+
+Completed:
+- Confirmed one cross-platform `threads` setting, defaulting to one. It
+  configures native distance construction, conditional probabilities,
+  initialization, and SCE updates; wasm accepts it but remains sequential.
+- Replaced the logical-worker model with parallel update rounds and retained
+  atomic-CAS embedding updates rather than allocating per-thread delta buffers.
+- Defined `max_updates` as a total-work target and `completed_updates` as the
+  reported work. Native runs use complete thread batches and may finish up to
+  `threads - 1` updates above the target; `advance` accepts round budgets.
+- Confirmed deterministic single-thread behavior only, persistent jumped RNG
+  streams, per-operation/per-distance-call native pools, public
+  `DistanceOptions`, and default-on native phase bars controlled by `quiet`.
+- Updated `CONTEXT.md` and recorded ADR 0003.
+
+Verification:
+- Design/documentation session only; no source or test changes were made.
+
+Next session:
+- Implement the confirmed worker-model cleanup from the Next Task.
+
+Blockers:
+- None.
+
+## 2026-08-12 (worker-model cleanup implementation)
+
+Completed:
+- Replaced `workers`/iteration terminology with `threads`, `max_updates`,
+  `completed_updates`, and round-budget `advance`; native rounds may overshoot
+  the update target by at most `threads - 1`, while wasm remains sequential.
+- Replaced logical worker execution with persistent Xoshiro256++ streams
+  initialized through disjoint `jump()` calls. Atomic floating-point CAS
+  updates and optimistic clash retries remain the shared embedding seam.
+- Added private per-operation/per-distance Rayon pools, parallel conditional
+  probabilities and initialization, and explicit `DistanceOptions` carrying
+  sparsification, threads, and quiet behavior.
+- Added default-on native phase bars for distances, probabilities, and
+  optimisation, with CLI pass-through and no duplicate CLI renderer. Added
+  feature-free no-op progress support for wasm.
+- Updated public API, CLI flags, distance constructors, focused tests, and
+  documented the sketchlib streaming coordinator-lane exception.
+
+Verification:
+- Native all-target tests: 24 passed.
+- Feature-free library tests and `wasm32-unknown-unknown` library check passed.
+- Native build, docs, formatting, both Clippy configurations, CLI help/smoke
+  checks, focused accessory CLI integration, and `git diff --check` passed.
+- Final pass after lazy progress-message formatting and accessory-phase bar
+  finalization repeated the native and feature-free tests, both Clippy
+  configurations, docs, formatting, wasm check, and diff validation
+  successfully.
+
+Next session:
+- Begin the distance-code efficiency pass listed under Next Task.
 
 Blockers:
 - None.

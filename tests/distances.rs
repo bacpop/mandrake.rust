@@ -1,7 +1,7 @@
 use mandrake::{
-    SketchOptions, Sparsification, accessory_distances, accessory_distances_from_reader,
-    pair_snp_distances, pair_snp_distances_from_reader, sketch_distances,
-    sketch_distances_from_fasta_list,
+    DistanceOptions, SketchOptions, Sparsification, accessory_distances,
+    accessory_distances_from_reader, pair_snp_distances, pair_snp_distances_from_reader,
+    sketch_distances, sketch_distances_from_fasta_list,
 };
 use std::fs::File;
 use std::io::{Cursor, Write};
@@ -15,6 +15,14 @@ fn temp_path(suffix: &str) -> PathBuf {
     ))
 }
 
+fn distance_options(sparsification: Sparsification) -> DistanceOptions {
+    DistanceOptions {
+        sparsification,
+        quiet: true,
+        ..DistanceOptions::default()
+    }
+}
+
 #[test]
 fn pair_snp_distances_are_normalized_and_keep_legacy_self_edges() {
     let path = temp_path("alignment.fasta.bz2");
@@ -23,7 +31,8 @@ fn pair_snp_distances_are_normalized_and_keep_legacy_self_edges() {
     write!(encoder, ">a\nACGT\n>b\nACGA\n>c\nACGN\n").unwrap();
     encoder.finish().unwrap();
 
-    let distances = pair_snp_distances(&path, Sparsification::Knn(1)).unwrap();
+    let options = distance_options(Sparsification::Knn(1));
+    let distances = pair_snp_distances(&path, &options).unwrap();
     assert_eq!(distances.n_samples(), 3);
     assert!(
         distances
@@ -45,14 +54,14 @@ fn pair_snp_distances_are_normalized_and_keep_legacy_self_edges() {
 fn reader_based_distance_constructors_accept_decompressed_bytes() {
     let alignment = pair_snp_distances_from_reader(
         Cursor::new(b">a\nACGT\n>b\nACGA\n"),
-        Sparsification::Knn(1),
+        &distance_options(Sparsification::Knn(1)),
     )
     .unwrap();
     assert_eq!(alignment.n_samples(), 2);
 
     let accessory = accessory_distances_from_reader(
         Cursor::new(b"Gene\ta\tb\ng1\t1\t0\ng2\t1\t1\n"),
-        Sparsification::Knn(1),
+        &distance_options(Sparsification::Knn(1)),
     )
     .unwrap();
     assert_eq!(accessory.n_samples(), 2);
@@ -67,7 +76,8 @@ fn accessory_distances_parse_binary_table_and_use_strict_thresholds() {
     writeln!(file, "g2\t1\t0\t0").unwrap();
     drop(file);
 
-    let distances = accessory_distances(&path, Sparsification::Threshold(0.5)).unwrap();
+    let options = distance_options(Sparsification::Threshold(0.5));
+    let distances = accessory_distances(&path, &options).unwrap();
     assert_eq!(distances.names(), ["a", "b", "c"]);
     assert!(distances.distances().iter().all(|&distance| distance < 0.5));
     assert!(
@@ -83,7 +93,8 @@ fn accessory_distances_parse_binary_table_and_use_strict_thresholds() {
 #[test]
 fn sketch_fixture_loads_as_sparse_distances() {
     let prefix = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sketches.skm");
-    let distances = sketch_distances(&prefix, Sparsification::Knn(2), false).unwrap();
+    let options = distance_options(Sparsification::Knn(2));
+    let distances = sketch_distances(&prefix, &options, false).unwrap();
     assert!(distances.n_samples() > 2);
     assert_eq!(distances.len(), distances.n_samples() * 2);
     assert!(
@@ -106,14 +117,14 @@ fn sketch_fasta_list_supports_core_and_accessory_distances() {
     };
     let core = sketch_distances_from_fasta_list(
         &[first.clone(), second.clone()],
-        Sparsification::Knn(1),
+        &distance_options(Sparsification::Knn(1)),
         false,
         &options,
     )
     .unwrap();
     let accessory = sketch_distances_from_fasta_list(
         &[first.clone(), second.clone()],
-        Sparsification::Knn(1),
+        &distance_options(Sparsification::Knn(1)),
         true,
         &options,
     )
@@ -142,7 +153,7 @@ fn cli_writes_embedding_and_names_for_accessory_input() {
             input.to_str().unwrap(),
             "--knn",
             "1",
-            "--max-iterations",
+            "--max-updates",
             "1",
             "--no-progress",
             "--output",

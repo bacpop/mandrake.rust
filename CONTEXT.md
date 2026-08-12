@@ -6,20 +6,60 @@ while it is being calculated.
 
 ## Language
 
+**Thread setting**:
+The single cross-platform configuration value that selects native parallelism
+for an embedding calculation; wasm accepts it but executes sequentially.
+_Avoid_: Worker count, worker setting
+
+**Operation pool**:
+The native Rayon pool owned by one embedding operation and configured from its
+thread setting; it is never a process-global pool.
+_Avoid_: Global pool, worker pool
+
+**Distance-construction pool**:
+The native Rayon pool scoped to one distance-constructor call and configured
+from its explicit thread setting.
+_Avoid_: Global distance pool, implicit Rayon pool
+
+**Distance options**:
+The common public configuration for distance construction: sparsification,
+thread setting, and whether native progress bars are quiet.
+_Avoid_: Source-specific parallel options, positional constructor settings
+
+**Single-thread reproducibility**:
+The fixed-seed guarantee for an embedding run configured with one thread and
+otherwise identical input and options.
+_Avoid_: Cross-thread reproducibility, parallel determinism
+
+**Update-attempt budget**:
+The thread-independent total number of stochastic SCE updates requested for an
+embedding calculation; it is reported as progress.
+_Avoid_: Worker iteration, parallel-round count
+
+**Update RNG stream**:
+A persistent, disjoint pseudorandom stream assigned to an executor lane for
+sampling SCE update attempts; it is not a unit of optimiser work.
+_Avoid_: Worker RNG, per-attempt seed
+
 **Embedding operation**:
 A caller-owned, incremental execution of one stochastic cluster embedding
 calculation.
 _Avoid_: Async task, background job
 
-**Iteration budget**:
-The maximum number of optimiser iterations that an embedding operation is asked
-to perform in one advance.
-_Avoid_: Frame count, batch size
+**Round budget**:
+The maximum number of full parallel SCE update rounds that an embedding
+operation is asked to perform in one advance.
+_Avoid_: Update-attempt budget, frame count
+
+**Completed updates**:
+The number of completed stochastic SCE update attempts reported as embedding
+progress.
+_Avoid_: Completed iterations, completed rounds
 
 **Current embedding**:
 The single embedding state retained by an embedding operation after its most
-recent completed iteration, including the initialized iteration-0 state before
-any optimisation work.
+recent completed parallel update round, including the initialized zero-update
+state before any optimisation work.
 _Avoid_: Frame, animation
 
 **Final embedding**:
@@ -33,8 +73,8 @@ operation.
 _Avoid_: Final embedding
 
 **Completed embedding operation**:
-An embedding operation that has reached its configured optimisation-iteration
-limit and retains its final current embedding.
+An embedding operation that has reached or exceeded its configured update
+target and retains its final current embedding.
 _Avoid_: Consumed result
 
 **Cancellation**:
@@ -58,19 +98,19 @@ before returning its final embedding.
 _Avoid_: Animated result
 
 **Embedding progress**:
-The completed and configured maximum iteration counts and current `Eq`
-convergence statistic reported after an operation advances.
+The completed and configured target update counts and current `Eq` convergence
+statistic reported after an operation advances.
 _Avoid_: Worker updates
 
 **No-op poll**:
-An advance with an iteration budget of zero that performs no optimisation work
+An advance with a round budget of zero that performs no optimisation work
 and reports the operation's existing progress.
 _Avoid_: Empty frame
 
-**Iteration limit**:
-The configured fixed number of optimiser iterations at which an embedding
-operation completes.
-_Avoid_: Convergence threshold
+**Update-attempt limit**:
+The configured target for SCE update attempts. A parallel operation may
+complete by up to one thread batch above this target.
+_Avoid_: Exact iteration limit, hard upper bound, convergence threshold
 
 ## Distance Input
 
