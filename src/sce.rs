@@ -65,6 +65,7 @@ pub(crate) struct EmbeddingOperationInner {
     learning_rate: f64,
     initial_exaggeration: bool,
     eq: f64,
+    optimization_started: bool,
     optimization_progress: PhaseProgress,
     #[cfg(not(target_arch = "wasm32"))]
     pool: rayon::ThreadPool,
@@ -98,6 +99,10 @@ impl EmbeddingOperationInner {
             .context("building Rayon thread pool")?;
 
         let row_edges = make_row_edges(&input.rows, input.n_nodes);
+        log::info!(
+            "calculating conditional probabilities for {} edges",
+            input.distances.len()
+        );
         #[cfg(not(target_arch = "wasm32"))]
         let probabilities = pool.install(|| {
             conditional_probabilities(
@@ -114,9 +119,11 @@ impl EmbeddingOperationInner {
             options.perplexity,
             options.quiet,
         )?;
+        log::info!("conditional probabilities calculated");
         let edge_table = AliasTable::new(&probabilities).context("building edge sampler")?;
         let node_table = AliasTable::new(&input.weights).context("building node sampler")?;
 
+        log::info!("initializing embedding for {} nodes", input.n_nodes);
         #[cfg(not(target_arch = "wasm32"))]
         let initial = initial_embedding(input.n_nodes, seed, &pool);
         #[cfg(target_arch = "wasm32")]
@@ -125,6 +132,7 @@ impl EmbeddingOperationInner {
         let current_embedding =
             Array2::from_shape_vec((input.n_nodes, DIMENSIONS), initial.clone())
                 .expect("initial embedding has the expected shape");
+        log::info!("embedding initialized");
         let embedding = AtomicEmbedding::new(initial);
         let rng_states = update_rng_streams(seed, threads);
 
@@ -144,6 +152,7 @@ impl EmbeddingOperationInner {
             learning_rate: options.learning_rate,
             initial_exaggeration: options.initial_exaggeration,
             eq: 1.0,
+            optimization_started: false,
             optimization_progress: PhaseProgress::new(
                 options.max_updates as u64,
                 options.quiet,
@@ -161,6 +170,13 @@ impl EmbeddingOperationInner {
         let remaining = self.max_updates.saturating_sub(self.completed_updates);
         let rounds_needed = remaining.div_ceil(self.threads);
         let rounds = round_budget.min(rounds_needed);
+        if !self.optimization_started {
+            log::info!(
+                "starting embedding optimisation for up to {} updates",
+                self.max_updates
+            );
+            self.optimization_started = true;
+        }
         for _ in 0..rounds {
             self.advance_round();
         }
@@ -169,6 +185,10 @@ impl EmbeddingOperationInner {
                 "completed {} updates (target {})",
                 self.completed_updates, self.max_updates
             )));
+            log::info!(
+                "embedding optimisation complete after {} updates",
+                self.completed_updates
+            );
         }
         self.progress()
     }

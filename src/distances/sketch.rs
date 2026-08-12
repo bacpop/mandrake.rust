@@ -46,6 +46,7 @@ pub fn sketch_distances<P: AsRef<Path>>(
         bail!("threshold sparsification is not supported for sketch inputs; use --knn");
     }
     let prefix = normalize_sketch_prefix(prefix.as_ref());
+    log::info!("loading sketch database {}", prefix.display());
     let sketches = MultiSketch::load(
         prefix
             .to_str()
@@ -71,6 +72,7 @@ pub fn sketch_distances_from_fasta_list<P: AsRef<Path>>(
     if sketch_options.sketch_size == 0 {
         bail!("sketch size must be positive");
     }
+    log::info!("loading {} FASTA inputs for sketch distances", files.len());
     let mut all_sketches = Vec::with_capacity(files.len());
     for path in files {
         let path = path.as_ref();
@@ -88,6 +90,10 @@ pub fn sketch_distances_from_fasta_list<P: AsRef<Path>>(
     if all_sketches.len() < 2 {
         bail!("at least two FASTA samples are required");
     }
+    log::info!(
+        "loaded {} FASTA samples for sketch distances",
+        all_sketches.len()
+    );
     let sketches = MultiSketch::from_sketches(
         &mut all_sketches,
         sketch_options.sketch_size,
@@ -101,13 +107,23 @@ fn sparse_sketch_distances(
     sketches: &MultiSketch,
     distance_options: &DistanceOptions,
 ) -> Result<SparseDistances> {
+    log::info!(
+        "constructing sketch distances for {} samples",
+        sketches.number_samples_loaded()
+    );
     let progress = super::distance_progress(distance_options, 1);
     let result = with_pool(distance_options.threads, || {
         sparse_sketch_distances_inner(sketches, distance_options)
     })?;
     progress.inc(1);
     progress.finish(None);
-    result
+    let result = result?;
+    log::info!(
+        "constructed sketch distances for {} samples with {} edges",
+        result.n_samples(),
+        result.len()
+    );
+    Ok(result)
 }
 
 fn sparse_sketch_distances_inner(

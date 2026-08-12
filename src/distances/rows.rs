@@ -2,10 +2,7 @@ use anyhow::{Result, bail};
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
 
-use super::{
-    DistanceOptions, SparseDistances, Sparsification, distance_progress, validate_distance_options,
-    with_pool,
-};
+use super::{DistanceOptions, SparseDistances, Sparsification, distance_progress, with_pool};
 
 /// Build a labeled COO distance value from a source-specific pair-distance
 /// function. Row construction owns sparsification so source adapters do not
@@ -18,12 +15,12 @@ pub(crate) fn build_sparse_distances<F>(
 where
     F: Fn(usize, usize) -> f64 + Sync,
 {
-    validate_distance_options(options)?;
     if names.len() < 2 {
         bail!("at least two sample names are required");
     }
 
     let n = names.len();
+    log::info!("constructing sparse distances for {n} samples");
     let progress = distance_progress(options, n);
     let retained_rows = with_pool(options.threads, || {
         (0..n)
@@ -48,7 +45,13 @@ where
             distances.push(distance);
         }
     }
-    SparseDistances::new(names, rows, columns, distances)
+    let result = SparseDistances::new(names, rows, columns, distances)?;
+    log::info!(
+        "constructed sparse distances for {} samples with {} edges",
+        result.n_samples(),
+        result.len()
+    );
+    Ok(result)
 }
 
 fn build_row<F>(

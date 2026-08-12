@@ -28,10 +28,11 @@ pub fn pair_snp_distances<P: AsRef<Path>>(
     options: &DistanceOptions,
 ) -> Result<SparseDistances> {
     let path = path.as_ref();
+    validate_distance_options(options)?;
+    log::info!("loading alignment {}", path.display());
     let mut reader = parse_fastx_file(path)
         .map_err(|error| anyhow!(error))
         .with_context(|| format!("opening alignment {}", path.display()))?;
-    validate_distance_options(options)?;
     let (names, sequences, alignment_len) = read_alignment(&mut *reader)?;
     pair_snp_distances_from_alignment(names, sequences, alignment_len, options)
 }
@@ -42,6 +43,7 @@ fn pair_snp_distances_from_alignment(
     alignment_len: usize,
     options: &DistanceOptions,
 ) -> Result<SparseDistances> {
+    log::info!("loaded alignment with {} samples", names.len());
     build_sparse_distances(names, options, move |left, right| {
         let matches = sequences[left].matching_sites(&sequences[right]).len() as usize;
         let gaps = sequences[left].either_gap_sites(&sequences[right]).len() as usize;

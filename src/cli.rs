@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Parser};
+use log::Level;
 use mandrake::{
     DistanceOptions, EmbeddingInput, EmbeddingOperation, SketchOptions, SparseDistances,
     Sparsification, WtsneOptions, accessory_distances, pair_snp_distances, sketch_distances,
@@ -8,6 +9,7 @@ use mandrake::{
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -38,46 +40,56 @@ struct Args {
     #[arg(long, value_name = "PREFIX_OR_LIST")]
     sketches: Option<PathBuf>,
     /// Number of neighbours to retain per sample
-    #[arg(short, long, visible_alias = "kNN", value_name = "N")]
+    #[arg(
+        short,
+        long,
+        visible_alias = "kNN",
+        value_name = "N",
+        value_parser = parse_positive_usize
+    )]
     knn: Option<usize>,
     /// Strict normalized distance threshold (not supported for sketches).
-    #[arg(long, value_name = "DISTANCE")]
+    #[arg(long, value_name = "DISTANCE", value_parser = parse_threshold)]
     threshold: Option<f64>,
-    /// Conditional-probability perplexity; non-positive values use raw similarities.
-    #[arg(long, default_value_t = 30.0)]
+    /// Conditional-probability perplexity in the inclusive range 5.0..=100.0.
+    #[arg(long, default_value_t = 30.0, value_parser = parse_perplexity)]
     perplexity: f64,
     /// Target number of stochastic update attempts.
-    #[arg(long, default_value_t = 1_000_000)]
+    #[arg(long, default_value_t = 1_000_000, value_parser = parse_positive_usize)]
     max_updates: usize,
     /// Repulsion samples per update attempt.
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 5, value_parser = parse_positive_usize)]
     repulsion_samples: usize,
     /// Initial learning rate.
-    #[arg(long, default_value_t = 1.0)]
+    #[arg(long, default_value_t = 1.0, value_parser = parse_positive_f64)]
     learning_rate: f64,
     /// Apply initial attraction exaggeration.
     #[arg(long)]
     initial_exaggeration: bool,
     /// Number of native optimisation threads.
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 1, value_parser = parse_positive_usize)]
     threads: usize,
     /// Disable the progress bar.
-    #[arg(long, visible_alias = "no-progress")]
+    #[arg(long, visible_alias = "no-progress", conflicts_with = "verbose")]
     quiet: bool,
+    /// Enable informational phase logging.
+    #[arg(short = 'v', long, conflicts_with = "quiet")]
+    verbose: bool,
     /// K-mer size used when --sketches points to a FASTA list.
-    #[arg(long, default_value_t = 21)]
+    #[arg(long, default_value_t = 21, value_parser = parse_positive_usize)]
     sketch_kmer: usize,
     /// Sketch bins used when --sketches points to a FASTA list.
-    #[arg(long, default_value_t = 1_000)]
+    #[arg(long, default_value_t = 1_000, value_parser = parse_positive_u64)]
     sketch_size: u64,
 }
 
 const CLI_ADVANCE_CHUNK: usize = 1_000;
 
 pub fn run() -> Result<()> {
-    env_logger::init();
     let args = Args::parse();
-    let sparsification = parse_sparsification(&args)?;
+    init_logger(&args);
+    let started_at = Instant::now();
+    let sparsification = parse_sparsification(&args);
     let distance_options = DistanceOptions {
         sparsification,
         threads: args.threads,
@@ -103,18 +115,85 @@ pub fn run() -> Result<()> {
         }
     }
     write_outputs(&args.output, &names, operation.embedding())?;
+    log::info!("total elapsed time: {:?}", started_at.elapsed());
     Ok(())
 }
 
-fn parse_sparsification(args: &Args) -> Result<Sparsification> {
+fn init_logger(args: &Args) {
+    if args.quiet {
+        simple_logger::init_with_level(Level::Error).unwrap();
+    } else if args.verbose {
+        simple_logger::init_with_level(Level::Info).unwrap();
+    } else {
+        simple_logger::init_with_level(Level::Warn).unwrap();
+    }
+}
+
+fn parse_sparsification(args: &Args) -> Sparsification {
     match (args.knn, args.threshold) {
-        (Some(k), None) if k > 0 => Ok(Sparsification::Knn(k)),
-        (None, Some(threshold)) if threshold.is_finite() && threshold > 0.0 && threshold <= 1.0 => {
-            Ok(Sparsification::Threshold(threshold))
-        }
-        (Some(_), None) => bail!("--knn must be greater than zero"),
-        (None, Some(_)) => bail!("--threshold must be finite and in (0, 1]"),
-        _ => bail!("specify exactly one of --knn or --threshold"),
+        (Some(k), None) => Sparsification::Knn(k),
+        (None, Some(threshold)) => Sparsification::Threshold(threshold),
+        _ => unreachable!("clap requires exactly one sparsification argument"),
+    }
+}
+
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "must be a positive integer".to_string())?;
+    if value == 0 {
+        Err("must be greater than zero".to_string())
+    } else {
+        Ok(value)
+    }
+}
+
+fn parse_positive_u64(value: &str) -> Result<u64, String> {
+    let value = value
+        .parse::<u64>()
+        .map_err(|_| "must be a positive integer".to_string())?;
+    if value == 0 {
+        Err("must be greater than zero".to_string())
+    } else {
+        Ok(value)
+    }
+}
+
+fn parse_finite_f64(value: &str) -> Result<f64, String> {
+    let value = value
+        .parse::<f64>()
+        .map_err(|_| "must be a finite number".to_string())?;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err("must be a finite number".to_string())
+    }
+}
+
+fn parse_positive_f64(value: &str) -> Result<f64, String> {
+    let value = parse_finite_f64(value)?;
+    if value > 0.0 {
+        Ok(value)
+    } else {
+        Err("must be finite and greater than zero".to_string())
+    }
+}
+
+fn parse_perplexity(value: &str) -> Result<f64, String> {
+    let value = parse_finite_f64(value)?;
+    if (5.0..=100.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err("must be finite and between 5.0 and 100.0".to_string())
+    }
+}
+
+fn parse_threshold(value: &str) -> Result<f64, String> {
+    let value = parse_finite_f64(value)?;
+    if (0.0..=1.0).contains(&value) && value > 0.0 {
+        Ok(value)
+    } else {
+        Err("must be finite and in (0, 1]".to_string())
     }
 }
 
@@ -162,6 +241,7 @@ fn sketch_prefix_exists(path: &Path) -> bool {
 }
 
 fn read_fasta_list(path: &Path) -> Result<Vec<PathBuf>> {
+    log::info!("loading FASTA path list {}", path.display());
     let file =
         File::open(path).with_context(|| format!("opening FASTA list {}", path.display()))?;
     let mut files = Vec::new();
@@ -175,17 +255,20 @@ fn read_fasta_list(path: &Path) -> Result<Vec<PathBuf>> {
     if files.len() < 2 {
         bail!("FASTA list must contain at least two paths");
     }
+    log::info!("loaded {} FASTA paths", files.len());
     Ok(files)
 }
 
 fn write_outputs(output: &Path, names: &[String], embedding: &ndarray::Array2<f64>) -> Result<()> {
     let embedding_path = PathBuf::from(format!("{}.embedding.txt", output.display()));
     let names_path = PathBuf::from(format!("{}.names.txt", output.display()));
+    log::info!("writing embedding output {}", embedding_path.display());
     let mut embedding_file = File::create(&embedding_path)
         .with_context(|| format!("creating {}", embedding_path.display()))?;
     for row in embedding.rows() {
         writeln!(embedding_file, "{:.17e}\t{:.17e}", row[0], row[1])?;
     }
+    log::info!("writing sample names output {}", names_path.display());
     let mut names_file =
         File::create(&names_path).with_context(|| format!("creating {}", names_path.display()))?;
     for name in names {

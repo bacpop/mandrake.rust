@@ -75,19 +75,6 @@ impl SparseDistances {
         if names.len() < 2 {
             bail!("at least two sample names are required");
         }
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(
-                rows.iter()
-                    .chain(&columns)
-                    .all(|&index| index < names.len() as u64)
-            );
-            debug_assert!(
-                distances
-                    .iter()
-                    .all(|&distance| distance.is_finite() && (0.0..=1.0).contains(&distance))
-            );
-        }
         Ok(Self {
             names,
             rows,

@@ -89,38 +89,33 @@ Expose:
 
 ## Objective
 
-Implement the confirmed distance-code efficiency design: use a private
-row-oriented construction seam with bounded kNN selection, generation-time
-strict thresholds, RoaringBitmap accessory profiles, automatic private seeding,
-and core-only sketch distances.
+Apply a narrow code and style refactor: use `simple_logger` with explicit CLI
+verbosity, add concise library-owned phase logging, move scalar CLI validation
+into `clap`, and remove redundant whole-vector validation without changing the
+algorithm or programmatic raw-similarity capability.
 
 ### Checklist
 
-- [x] Define the exact kNN edge-count, self-edge, and tie contract
-- [x] Resolve threshold boundary semantics
-- [x] Resolve output ordering and compatibility requirements
-- [x] Resolve automatic seeding and deterministic-test access
-- [x] Resolve standalone versus sketch accessory scope
-- [x] Resolve the shared row-construction module seam
-- [x] Resolve the accessory sample representation
-- [x] Resolve symmetric-computation and directed-output semantics
-- [x] Resolve final COO assembly
-- [x] Define verification evidence and external benchmarking scope
-- [x] Record confirmed domain language and ADR 0004
-- [x] Update this plan with decisions, blockers, log, and implementation next task
-- [x] Implement the private row-construction module and migrate alignment/accessory
-- [x] Remove sketch accessory mode and public seed configuration
-- [x] Add focused edge-set and selector-invariant coverage
-- [x] Run native, feature-free, wasm, formatting, lint, docs, and diff checks
+- [x] Grill and confirm the narrow refactoring scope
+- [x] Confirm logger dependency, levels, flag conflicts, and compatibility aliases
+- [x] Confirm library/CLI logging ownership and phase-message granularity
+- [x] Confirm CLI validation bounds and preserved programmatic API semantics
+- [x] Confirm structural/parser checks and redundant whole-vector checks
+- [x] Confirm no new tests and required documentation updates
+- [x] Replace `env_logger` with `simple_logger` and add `--verbose`/`-v`
+- [x] Add library phase logs, CLI source/output logs, and one total elapsed log
+- [x] Move scalar CLI validation into `clap` and simplify sparsification parsing
+- [x] Remove redundant distance-option validation and full-vector debug scans
+- [x] Update README and CLI-facing documentation
+- [x] Run the existing tests, manual CLI checks, formatting, lint, docs, and diff checks
 
 ### Current Status
 
 Working on:
 
-The confirmed distance-code efficiency design is implemented. The private
-row-construction seam, exact-k/strict-threshold behavior, RoaringBitmap
-accessory profiles, sketch core-only API, and private automatic seeding are
-implemented and verified across native and feature-free builds.
+The confirmed logging, CLI-validation, and validation-cost refactor is
+complete. The previous distance-code efficiency implementation remains
+unchanged as the baseline.
 
 Last verified:
 
@@ -130,8 +125,9 @@ Last verified:
 `cargo fmt --all -- --check`, `cargo clippy --all-targets --offline -- -D warnings`,
 `cargo clippy --lib --no-default-features --offline -- -D warnings`,
 `cargo check --lib --no-default-features --target wasm32-unknown-unknown
---offline`, `cargo run --offline -- --help`, the focused accessory CLI
-integration test, and `git diff --check` pass.
+--offline`, `cargo run --offline -- --help`, manual CLI checks for invalid
+perplexity, conflicting logging flags, verbose phase output, quiet output, and
+repeated `-v`, and `git diff --check` pass.
 
 Blockers:
 
@@ -209,6 +205,37 @@ None.
 - The sketch distance constructor signatures are now core-only and no longer
   accept an accessory selector; standalone `.Rtab` accessory constructors and
   the CLI `--accessory` path remain available.
+
+## Code and style refactor
+
+- Replace the CLI's optional `env_logger` dependency with `simple_logger`.
+  Parse arguments before logger setup and select `Error` for `--quiet`, `Info`
+  for `--verbose`/`-v`, and `Warn` by default. `--quiet` and `--verbose` are
+  mutually exclusive; retain the `--no-progress` alias. `-vv` is not a second
+  verbosity level, and `--verbose` leaves progress bars enabled.
+- Emit concise `log::info!` phase messages from the code that owns each phase.
+  Path loaders report source loading, reader constructors report parsed sample
+  counts, shared distance construction reports start/completion and retained
+  edge counts, embedding operations report probability preprocessing,
+  initialization, and optimisation, and the CLI reports output writing. Do
+  not log individual records, updates, allocations, or helper substeps. The
+  CLI emits one final total elapsed-time measurement after outputs are written;
+  no phase timings are tracked.
+- Move CLI scalar validation into named `clap` value parsers and declarative
+  argument constraints. Preserve current CLI semantics for positive integer
+  settings, positive finite learning rate, positive kNN, and finite threshold
+  in `(0, 1]`; require CLI perplexity in inclusive `[5.0, 100.0]`. The public
+  Rust API continues to accept non-positive perplexity for raw-similarity mode
+  and retains its own cheap validation for programmatic callers.
+- Make `parse_sparsification` an infallible mapping after `clap` validation and
+  validate distance options once at each public constructor boundary. Keep
+  parser-integrity checks such as alignment lengths and accessory row shape,
+  but remove full-vector debug scans from `SparseDistances::new`; its remaining
+  checks are constant-time structural checks.
+- Do not add tests in this pass. Use the existing test suite, manual CLI
+  checks, formatting, lint, documentation, and diff checks as verification.
+- Update README and CLI-facing documentation. No ADR or glossary entry is
+  needed unless implementation reveals a durable domain trade-off.
 
 ## Parallelism
 
@@ -468,22 +495,9 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-Run the external runtime and peak-RSS benchmark comparison for representative
-alignment and standalone accessory inputs, then inspect the resulting directed
-COO edge sets for the intended exact-k and strict-threshold behavior. No
-in-repository benchmark or performance gate is required by this phase.
-
-# Further tasks
-
-Tasks for later implementation steps:
-
-- Code and style refactoring. Taking note of house style above, which
-  has been ignored.
-  - Add a verbose option and logging messages for every step (loading
-    files, distances, probabilities, calculating embedding)
-  - Logging with the log package, rather than eprintln.
-  - Remove costly checks, especially on long distance vectors. Checking
-    of user input paramaters should be done in CLI as part of clap
+- Run the external runtime and peak-RSS benchmark comparison for representative
+  alignment and standalone accessory inputs, then inspect directed COO edge
+  sets. No in-repository benchmark or performance gate is required.
 
 ---
 
@@ -771,6 +785,43 @@ Next session:
 - Run the external runtime and peak-RSS benchmark comparison and inspect the
   directed COO edge sets. No source implementation remains required for this
   phase.
+
+Blockers:
+- None.
+
+## 2026-08-12 (code and style refactor)
+
+Completed:
+- Replaced the optional CLI `env_logger` dependency with `simple_logger` and
+  added mutually exclusive `--verbose`/`-v` and `--quiet`/`--no-progress`
+  behavior at `Info`, `Error`, and default `Warn` levels.
+- Added concise library-owned loading, distance, probability, initialization,
+  optimisation, output, and total elapsed-time logs without duplicate or
+  per-record/per-update messages.
+- Moved scalar CLI validation into `clap`, including the CLI-only inclusive
+  perplexity range `[5.0, 100.0]`; preserved programmatic raw-similarity mode.
+- Removed redundant distance-option validation from private helpers and the
+  full-vector debug scans from `SparseDistances::new` while retaining cheap
+  structural and parser-integrity checks.
+- Updated README and CLI help-facing documentation. No tests were added, as
+  agreed.
+
+Verification:
+- `cargo test --all-targets --offline`: 29 tests passed.
+- `cargo test --no-default-features --lib --offline`, native build, docs,
+  formatting, both Clippy configurations, feature-free wasm check, and
+  `git diff --check` passed.
+- Manual CLI checks confirmed help output, invalid perplexity rejection,
+  mutually exclusive logging flags, verbose phase logs and total timing,
+  quiet suppression, and rejection of repeated `-v`.
+
+Deviations:
+- No new tests or phase timing instrumentation were added, per the confirmed
+  scope. Only one total CLI elapsed-time measurement was added.
+
+Next session:
+- Run the external runtime and peak-RSS benchmark comparison and inspect the
+  directed COO edge sets; no further code is required for this refactor.
 
 Blockers:
 - None.

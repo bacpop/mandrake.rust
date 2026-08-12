@@ -15,7 +15,15 @@ pub fn accessory_distances_from_reader<R: Read>(
     options: &DistanceOptions,
 ) -> Result<SparseDistances> {
     validate_distance_options(options)?;
+    accessory_distances_from_reader_inner(reader, options)
+}
+
+fn accessory_distances_from_reader_inner<R: Read>(
+    reader: R,
+    options: &DistanceOptions,
+) -> Result<SparseDistances> {
     let (names, profiles) = read_accessory_table(reader)?;
+    log::info!("loaded accessory table with {} samples", names.len());
     build_sparse_distances(names, options, move |left, right| {
         jaccard_distance(&profiles[left], &profiles[right])
     })
@@ -28,12 +36,14 @@ pub fn accessory_distances<P: AsRef<Path>>(
     options: &DistanceOptions,
 ) -> Result<SparseDistances> {
     let path = path.as_ref();
+    validate_distance_options(options)?;
+    log::info!("loading accessory table {}", path.display());
     let file =
         File::open(path).with_context(|| format!("opening accessory table {}", path.display()))?;
     if path.extension().is_some_and(|extension| extension == "bz2") {
-        accessory_distances_from_reader(bzip2::read::BzDecoder::new(file), options)
+        accessory_distances_from_reader_inner(bzip2::read::BzDecoder::new(file), options)
     } else {
-        accessory_distances_from_reader(file, options)
+        accessory_distances_from_reader_inner(file, options)
     }
 }
 
