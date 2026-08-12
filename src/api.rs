@@ -95,7 +95,8 @@ impl EmbeddingProgress {
 /// A caller-owned, cooperatively stepped embedding calculation.
 ///
 /// Use [`Self::advance`] to perform a caller-selected number of rounds and
-/// [`Self::embedding`] to borrow the latest completed embedding state.
+/// [`Self::embedding`] to borrow the latest completed embedding state. Public
+/// operations seed their private random streams from system time.
 pub struct EmbeddingOperation {
     pub(crate) inner: crate::sce::EmbeddingOperationInner,
 }
@@ -148,8 +149,6 @@ pub struct WtsneOptions {
     pub threads: usize,
     /// Suppress native phase progress bars.
     pub quiet: bool,
-    /// Seed for all random-number streams.
-    pub seed: u64,
 }
 
 impl Default for WtsneOptions {
@@ -162,7 +161,6 @@ impl Default for WtsneOptions {
             initial_exaggeration: false,
             threads: 1,
             quiet: false,
-            seed: 1,
         }
     }
 }

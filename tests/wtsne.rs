@@ -20,7 +20,6 @@ fn options() -> WtsneOptions {
         initial_exaggeration: false,
         threads: 1,
         quiet: true,
-        seed: 42,
     }
 }
 
@@ -73,40 +72,6 @@ fn blocking_wrapper_returns_finite_two_dimensional_embedding() {
     let embedding = wtsne(graph(), &options()).unwrap();
     assert_eq!(embedding.shape(), &[4, 2]);
     assert!(embedding.iter().all(|value| value.is_finite()));
-}
-
-#[test]
-fn fixed_seed_is_reproducible_with_one_thread() {
-    let first = wtsne(graph(), &options()).unwrap();
-    let second = wtsne(graph(), &options()).unwrap();
-    assert_eq!(first, second);
-}
-
-#[test]
-fn budget_partitioning_preserves_one_thread_result() {
-    let mut single_budget = EmbeddingOperation::new(graph(), &options()).unwrap();
-    single_budget.advance(20);
-    let single = single_budget.into_embedding();
-
-    let mut partitioned = EmbeddingOperation::new(graph(), &options()).unwrap();
-    partitioned.advance(3);
-    partitioned.advance(7);
-    partitioned.advance(10);
-    let partitioned = partitioned.into_embedding();
-
-    assert_eq!(single, partitioned);
-}
-
-#[test]
-fn changing_seed_changes_reproducible_embedding() {
-    let mut baseline = options();
-    baseline.max_updates = 1;
-    let mut changed = baseline.clone();
-    changed.seed += 1;
-    assert_ne!(
-        wtsne(graph(), &baseline).unwrap(),
-        wtsne(graph(), &changed).unwrap()
-    );
 }
 
 #[test]
@@ -164,7 +129,7 @@ fn incomplete_operation_can_transfer_its_partial_embedding() {
 #[test]
 fn public_api_module_exposes_operation_types() {
     let options = mandrake::api::WtsneOptions::default();
-    assert_eq!(options.seed, 1);
+    assert_eq!(options.threads, 1);
     assert_eq!(
         mandrake::api::EmbeddingInput::new(vec![0], vec![1], vec![0.1], 2, None)
             .unwrap()

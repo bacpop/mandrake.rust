@@ -1,15 +1,12 @@
 use anyhow::{Context, Result, anyhow, bail};
-use rayon::prelude::*;
+use roaring::RoaringBitmap;
 #[cfg(feature = "native-inputs")]
 use std::fs::File;
 use std::io::Read;
 #[cfg(feature = "native-inputs")]
 use std::path::Path;
 
-use super::{
-    DistanceOptions, SparseDistances, flatten_rows, jaccard_distance, select_distance_row,
-    validate_distance_options, with_pool,
-};
+use super::{DistanceOptions, SparseDistances, build_sparse_distances, validate_distance_options};
 
 /// Calculate Jaccard distances from an already-decompressed binary Roary-style
 /// `.Rtab` reader.
@@ -18,27 +15,10 @@ pub fn accessory_distances_from_reader<R: Read>(
     options: &DistanceOptions,
 ) -> Result<SparseDistances> {
     validate_distance_options(options)?;
-    let (names, columns) = read_accessory_table(reader)?;
-    let n = names.len();
-    let progress = super::distance_progress(options, n);
-    let rows = with_pool(options.threads, || {
-        (0..n)
-            .into_par_iter()
-            .map(|i| {
-                let mut candidates = Vec::with_capacity(n.saturating_sub(1));
-                for j in 0..n {
-                    if i != j {
-                        candidates.push((j, jaccard_distance(&columns[i], &columns[j])));
-                    }
-                }
-                progress.inc(1);
-                select_distance_row(i, candidates, options.sparsification)
-            })
-            .collect::<Vec<_>>()
-    })?;
-    progress.finish(None);
-    let (rows, columns, distances) = flatten_rows(rows);
-    SparseDistances::new(names, rows, columns, distances)
+    let (names, profiles) = read_accessory_table(reader)?;
+    build_sparse_distances(names, options, move |left, right| {
+        jaccard_distance(&profiles[left], &profiles[right])
+    })
 }
 
 /// Calculate Jaccard distances from a native `.Rtab` path.
@@ -57,7 +37,7 @@ pub fn accessory_distances<P: AsRef<Path>>(
     }
 }
 
-fn read_accessory_table<R: Read>(reader: R) -> Result<(Vec<String>, Vec<Vec<u8>>)> {
+fn read_accessory_table<R: Read>(reader: R) -> Result<(Vec<String>, Vec<RoaringBitmap>)> {
     let mut csv = csv::ReaderBuilder::new()
         .delimiter(b'\t')
         .has_headers(false)
@@ -75,20 +55,31 @@ fn read_accessory_table<R: Read>(reader: R) -> Result<(Vec<String>, Vec<Vec<u8>>
         .skip(1)
         .map(str::to_string)
         .collect::<Vec<_>>();
-    let mut columns = vec![Vec::new(); names.len()];
-    for record in csv.records() {
+    let mut profiles = vec![RoaringBitmap::new(); names.len()];
+    for (gene, record) in csv.records().enumerate() {
         let record = record.context("reading accessory table row")?;
         if record.len() != names.len() + 1 {
             bail!("accessory table row has the wrong number of columns");
         }
         for (column, value) in record.iter().skip(1).enumerate() {
             let value = match value {
-                "0" => 0,
-                "1" => 1,
+                "0" => false,
+                "1" => true,
                 _ => bail!("accessory values must be binary 0/1"),
             };
-            columns[column].push(value);
+            if value {
+                profiles[column].insert(gene as u32);
+            }
         }
     }
-    Ok((names, columns))
+    Ok((names, profiles))
+}
+
+fn jaccard_distance(left: &RoaringBitmap, right: &RoaringBitmap) -> f64 {
+    let union = left.union_len(right);
+    if union == 0 {
+        0.0
+    } else {
+        1.0 - left.intersection_len(right) as f64 / union as f64
+    }
 }

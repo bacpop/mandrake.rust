@@ -6,6 +6,7 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::{RngCore, SeedableRng};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::{EmbeddingInput, EmbeddingProgress, WtsneOptions};
 use crate::progress::PhaseProgress;
@@ -71,10 +72,19 @@ pub(crate) struct EmbeddingOperationInner {
 
 impl EmbeddingOperationInner {
     pub(crate) fn new(input: EmbeddingInput, options: &WtsneOptions) -> Result<Self> {
+        Self::new_with_seed(input, options, None)
+    }
+
+    fn new_with_seed(
+        input: EmbeddingInput,
+        options: &WtsneOptions,
+        configured_seed: Option<u64>,
+    ) -> Result<Self> {
         validate_options(options)?;
         if input.rows.is_empty() {
             bail!("at least one COO edge is required");
         }
+        let seed = configured_seed.unwrap_or_else(system_seed);
 
         #[cfg(not(target_arch = "wasm32"))]
         let threads = options.threads;
@@ -108,15 +118,15 @@ impl EmbeddingOperationInner {
         let node_table = AliasTable::new(&input.weights).context("building node sampler")?;
 
         #[cfg(not(target_arch = "wasm32"))]
-        let initial = initial_embedding(input.n_nodes, options.seed, &pool);
+        let initial = initial_embedding(input.n_nodes, seed, &pool);
         #[cfg(target_arch = "wasm32")]
-        let initial = initial_embedding(input.n_nodes, options.seed);
+        let initial = initial_embedding(input.n_nodes, seed);
 
         let current_embedding =
             Array2::from_shape_vec((input.n_nodes, DIMENSIONS), initial.clone())
                 .expect("initial embedding has the expected shape");
         let embedding = AtomicEmbedding::new(initial);
-        let rng_states = update_rng_streams(options.seed, threads);
+        let rng_states = update_rng_streams(seed, threads);
 
         Ok(Self {
             embedding,
@@ -225,6 +235,13 @@ impl EmbeddingOperationInner {
             });
         self.embedding.copy_into(&mut self.current_embedding);
     }
+}
+
+fn system_seed() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
 }
 
 fn validate_options(options: &WtsneOptions) -> Result<()> {
@@ -565,5 +582,66 @@ impl AtomicEmbedding {
         for (target, source) in target.iter_mut().zip(&self.values) {
             *target = f64::from_bits(source.load(Ordering::SeqCst));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EmbeddingOperationInner;
+    use crate::api::{EmbeddingInput, WtsneOptions};
+
+    fn graph() -> EmbeddingInput {
+        EmbeddingInput::new(
+            vec![0, 0, 1, 1, 2, 2, 3, 3],
+            vec![1, 2, 0, 2, 0, 3, 0, 2],
+            vec![0.1, 0.4, 0.1, 0.2, 0.4, 0.3, 0.3, 0.2],
+            4,
+            Some(vec![1.0, 2.0, 1.0, 1.0]),
+        )
+        .unwrap()
+    }
+
+    fn options() -> WtsneOptions {
+        WtsneOptions {
+            perplexity: 2.0,
+            max_updates: 20,
+            repulsion_samples: 1,
+            learning_rate: 1.0,
+            initial_exaggeration: false,
+            threads: 1,
+            quiet: true,
+        }
+    }
+
+    #[test]
+    fn configured_seed_keeps_private_single_thread_runs_reproducible() {
+        let mut first =
+            EmbeddingOperationInner::new_with_seed(graph(), &options(), Some(42)).unwrap();
+        first.advance(20);
+        let first = first.into_embedding();
+
+        let mut second =
+            EmbeddingOperationInner::new_with_seed(graph(), &options(), Some(42)).unwrap();
+        second.advance(20);
+        let second = second.into_embedding();
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn configured_seed_preserves_budget_partitioning() {
+        let mut single =
+            EmbeddingOperationInner::new_with_seed(graph(), &options(), Some(42)).unwrap();
+        single.advance(20);
+        let single = single.into_embedding();
+
+        let mut partitioned =
+            EmbeddingOperationInner::new_with_seed(graph(), &options(), Some(42)).unwrap();
+        partitioned.advance(3);
+        partitioned.advance(7);
+        partitioned.advance(10);
+        let partitioned = partitioned.into_embedding();
+
+        assert_eq!(single, partitioned);
     }
 }

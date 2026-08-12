@@ -43,9 +43,6 @@ struct Args {
     /// Strict normalized distance threshold (not supported for sketches).
     #[arg(long, value_name = "DISTANCE")]
     threshold: Option<f64>,
-    /// Use accessory rather than core sketch distances.
-    #[arg(long)]
-    use_accessory: bool,
     /// Conditional-probability perplexity; non-positive values use raw similarities.
     #[arg(long, default_value_t = 30.0)]
     perplexity: f64,
@@ -64,9 +61,6 @@ struct Args {
     /// Number of native optimisation threads.
     #[arg(long, default_value_t = 1)]
     threads: usize,
-    /// Random seed.
-    #[arg(long, default_value_t = 1)]
-    seed: u64,
     /// Disable the progress bar.
     #[arg(long, visible_alias = "no-progress")]
     quiet: bool,
@@ -100,7 +94,6 @@ pub fn run() -> Result<()> {
         initial_exaggeration: args.initial_exaggeration,
         threads: args.threads,
         quiet: args.quiet,
-        seed: args.seed,
     };
     let mut operation = EmbeddingOperation::new(input, &options).context("running wtsne")?;
     loop {
@@ -128,12 +121,7 @@ fn parse_sparsification(args: &Args) -> Result<Sparsification> {
 fn build_distances(args: &Args, options: &DistanceOptions) -> Result<SparseDistances> {
     match (&args.alignment, &args.accessory, &args.sketches) {
         (Some(path), None, None) => pair_snp_distances(path, options),
-        (None, Some(path), None) => {
-            if args.use_accessory {
-                bail!("--use-accessory is only valid with --sketches")
-            }
-            accessory_distances(path, options)
-        }
+        (None, Some(path), None) => accessory_distances(path, options),
         (None, None, Some(path)) => {
             if matches!(options.sparsification, Sparsification::Threshold(_)) {
                 bail!("threshold sparsification is not supported for sketch inputs; use --knn")
@@ -143,15 +131,10 @@ fn build_distances(args: &Args, options: &DistanceOptions) -> Result<SparseDista
                 sketch_size: args.sketch_size,
             };
             if sketch_prefix_exists(path) {
-                sketch_distances(path, options, args.use_accessory)
+                sketch_distances(path, options)
             } else {
                 let files = read_fasta_list(path)?;
-                sketch_distances_from_fasta_list(
-                    &files,
-                    options,
-                    args.use_accessory,
-                    &sketch_options,
-                )
+                sketch_distances_from_fasta_list(&files, options, &sketch_options)
             }
         }
         _ => bail!("specify exactly one input source"),

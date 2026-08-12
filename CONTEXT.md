@@ -26,11 +26,6 @@ The common public configuration for distance construction: sparsification,
 thread setting, and whether native progress bars are quiet.
 _Avoid_: Source-specific parallel options, positional constructor settings
 
-**Single-thread reproducibility**:
-The fixed-seed guarantee for an embedding run configured with one thread and
-otherwise identical input and options.
-_Avoid_: Cross-thread reproducibility, parallel determinism
-
 **Update-attempt budget**:
 The thread-independent total number of stochastic SCE updates requested for an
 embedding calculation; it is reported as progress.
@@ -113,6 +108,33 @@ complete by up to one thread batch above this target.
 _Avoid_: Exact iteration limit, hard upper bound, convergence threshold
 
 ## Distance Input
+
+**Exact k-nearest neighbours**:
+For each sample, the closest `k` other samples, excluding itself; equal
+distances are resolved by sample index so the retained set is deterministic.
+Zero selects every other sample.
+_Avoid_: Tie-expanded kNN, self-inclusive kNN
+
+**Directed neighbour graph**:
+The sparse graph formed by independent per-sample neighbour selection; an edge
+from one sample to another does not require the reverse edge to be present.
+_Avoid_: Symmetric kNN graph, mutual-neighbour graph
+
+**Strict distance threshold**:
+A sparsification boundary that retains an edge only when its normalized
+distance is strictly less than the configured threshold, consistently across
+distance sources.
+_Avoid_: Inclusive threshold, source-specific threshold
+
+**Unordered sparse distances**:
+A labeled COO distance value whose edge order carries no domain meaning; SCE
+groups entries by their row indices rather than relying on input order.
+_Avoid_: Sorted sparse distances, canonical COO order
+
+**Accessory profile**:
+The set of accessory genes present in one sample, used to calculate Jaccard
+distance between samples.
+_Avoid_: Accessory row, binary sample vector
 
 **Reader-based distance constructor**:
 A distance constructor that reads a supported alignment or accessory format

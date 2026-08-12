@@ -89,33 +89,42 @@ Expose:
 
 ## Objective
 
-Implement the confirmed worker-model cleanup: replace explicit logical workers
-in the main SCE optimiser with parallel update rounds, expose one cross-platform
-thread setting, retain atomic updates, add persistent jumped RNG streams,
-distance options, and native phase progress bars.
+Implement the confirmed distance-code efficiency design: use a private
+row-oriented construction seam with bounded kNN selection, generation-time
+strict thresholds, RoaringBitmap accessory profiles, automatic private seeding,
+and core-only sketch distances.
 
 ### Checklist
 
-- [x] Record the confirmed worker-model design in the plan and domain docs
-- [x] Replace worker configuration/API with `threads`, `max_updates`, and `quiet`
-- [x] Replace worker execution with persistent RNG-backed parallel rounds
-- [x] Scope Rayon pools for SCE, probabilities, and distance constructors
-- [x] Add native phase progress bars and shared `DistanceOptions`
-- [x] Update focused API, distance, CLI, and wasm coverage
-- [x] Verify native/wasm builds, tests, formatting, lint, docs, and diff checks
-- [x] Update this plan with implementation status, decisions, blockers, log, and next task
+- [x] Define the exact kNN edge-count, self-edge, and tie contract
+- [x] Resolve threshold boundary semantics
+- [x] Resolve output ordering and compatibility requirements
+- [x] Resolve automatic seeding and deterministic-test access
+- [x] Resolve standalone versus sketch accessory scope
+- [x] Resolve the shared row-construction module seam
+- [x] Resolve the accessory sample representation
+- [x] Resolve symmetric-computation and directed-output semantics
+- [x] Resolve final COO assembly
+- [x] Define verification evidence and external benchmarking scope
+- [x] Record confirmed domain language and ADR 0004
+- [x] Update this plan with decisions, blockers, log, and implementation next task
+- [x] Implement the private row-construction module and migrate alignment/accessory
+- [x] Remove sketch accessory mode and public seed configuration
+- [x] Add focused edge-set and selector-invariant coverage
+- [x] Run native, feature-free, wasm, formatting, lint, docs, and diff checks
 
 ### Current Status
 
 Working on:
 
-The worker-model cleanup is complete. The public API, native parallel rounds,
-distance options, progress phases, and portable wasm build all reflect the
-confirmed design.
+The confirmed distance-code efficiency design is implemented. The private
+row-construction seam, exact-k/strict-threshold behavior, RoaringBitmap
+accessory profiles, sketch core-only API, and private automatic seeding are
+implemented and verified across native and feature-free builds.
 
 Last verified:
 
-2026-08-12: `cargo test --all-targets --offline` (24 tests),
+2026-08-12: `cargo test --all-targets --offline` (29 tests),
 `cargo test --no-default-features --lib --offline`,
 `cargo build --all-targets --offline`, `cargo doc --no-deps --offline`,
 `cargo fmt --all -- --check`, `cargo clippy --all-targets --offline -- -D warnings`,
@@ -132,6 +141,75 @@ None.
 
 # Design Notes
 
+## Distance efficiency pass
+
+- `Sparsification::Knn(k)` will use one uniform exact-k contract for alignment
+  and accessory inputs: retain `min(k, n - 1)` non-self neighbours per row,
+  with equal distances resolved by ascending column index. `Knn(0)` retains
+  every non-self neighbour. This intentionally replaces alignment's legacy
+  self-edge and tie-expansion behaviour so row construction can use bounded
+  candidate storage and both sources expose the same meaning of kNN.
+- `Sparsification::Threshold(t)` will uniformly retain only edges whose
+  normalized distance is strictly less than `t`. Filtering occurs as each
+  distance is generated rather than after a full row is materialized. Thus a
+  threshold of zero retains no edges and a threshold of one excludes edges at
+  normalized distance exactly one.
+- `SparseDistances` COO edge order is explicitly unspecified. SCE reconstructs
+  row membership from the row-index vector and does not require sorted input,
+  so bounded kNN heaps may be drained directly without sorting. Reordering can
+  still change floating-point accumulation and internally seeded test results.
+- Remove the public `WtsneOptions::seed` field and CLI `--seed` option. The
+  private optimiser constructor accepts `Option<u64>`: internal deterministic
+  tests pass `Some(seed)`, while all public entry points pass `None` and derive
+  a seed from system time. Use `web_time::SystemTime` so this works on native
+  targets and browser-hosted `wasm32-unknown-unknown`; no public reproducibility
+  guarantee remains.
+- Retain standalone Roary-style accessory-table input, including CLI
+  `--accessory` and its public constructors. Remove sketch `--use-accessory`
+  and its streaming accessory-distance implementation; sketch distances become
+  core-only. The standalone alignment and accessory paths remain the two
+  source adapters that need a shared row-construction seam.
+- Add one private deep row-construction module whose interface accepts sample
+  names, `DistanceOptions`, and a pair-distance closure. It owns the configured
+  pool, row-parallel traversal, progress, exact-k heaps, generation-time
+  threshold filtering, and final COO assembly. Alignment and accessory parsing
+  remain source-specific adapters. A private closure is sufficient because
+  pair-distance calculation is the only varying operation; do not add a public
+  or private distance trait solely for this seam.
+- Represent each standalone accessory sample as one `RoaringBitmap` containing
+  the row indices of genes present in that sample, replacing its dense
+  `Vec<u8>`. Compute Jaccard distance from `intersection_len` and `union_len`
+  without materializing temporary bitmaps.
+- Keep lock-free row ownership by calculating both directed forms of each
+  symmetric pair independently. This accepts doubled pair-distance computation
+  in exchange for `O(k)` auxiliary storage per active kNN row and no shared heap
+  synchronization or per-thread heap sets. kNN output is directed: retaining
+  `(i, j)` does not require retaining `(j, i)`.
+- Each parallel row returns an unsorted `Vec<(column, distance)>`. After row
+  construction, sum retained lengths, allocate the three flat COO vectors once,
+  and append each row while generating its repeated row index. This is the one
+  unavoidable `O(retained edges)` assembly pass; temporary candidates do not
+  store redundant row indices, and assembly needs no sorting, locks, unsafe
+  concurrent writes, or repeated flat-vector growth.
+- Implementation verification will compare public COO edge sets without
+  assuming order and cover exact k, self-edge exclusion, deterministic tie
+  selection, directed/non-symmetric kNN, strict threshold boundaries for both
+  standalone sources, and the private selector's `heap.len() <= k` invariant.
+  Run the existing native, feature-free, and wasm checks. The user will perform
+  runtime and peak-RSS benchmarking externally, so no in-repository benchmark
+  or performance gate is part of this task's completion criteria.
+- ADR 0004 records the deliberate compatibility and compute-for-memory
+  trade-offs in the row-owned sparse-distance construction contract.
+- Implementation uses a `BinaryHeap` max-heap whose ordering treats larger
+  distance and, on ties, larger column index as the worst candidate. Draining
+  the heap directly intentionally leaves each row unsorted.
+- Public construction resolves a `None` seed once from `web_time::SystemTime`;
+  only private unit tests can pass `Some(seed)`. The public options and CLI no
+  longer expose seed configuration.
+- The sketch distance constructor signatures are now core-only and no longer
+  accept an accessory selector; standalone `.Rtab` accessory constructors and
+  the CLI `--accessory` path remain available.
+
 ## Parallelism
 
 - Prefer Rayon.
@@ -142,10 +220,10 @@ None.
   distance construction, conditional probabilities, embedding initialization,
   and SCE updates. The setting is accepted on wasm for API compatibility, but
   wasm execution remains sequential and values above one have no effect.
-- A fixed seed guarantees reproducible embeddings only with `threads = 1` and
-  otherwise identical input and options. Multi-threaded SCE updates may vary
-  with scheduling, so their verification targets finite output and intended
-  behaviour rather than equality across thread counts.
+- Internal deterministic tests may inject a fixed seed with `threads = 1`.
+  Public calls are automatically seeded, and multi-threaded SCE updates may
+  also vary with scheduling, so public verification targets finite output and
+  intended behaviour rather than coordinate equality.
 - `max_updates` is a thread-independent total update-attempt target, not a
   count of parallel rounds. Progress reports completed update attempts. Each
   internal parallel round performs `threads` attempts. A run may finish up to
@@ -199,15 +277,16 @@ None.
 
 - Use `rand_xoshiro::Xoshiro256PlusPlus` through its `RngCore` and
   `SeedableRng` interfaces.
-- Initialize a root, domain-separated update RNG once from the configured
-  seed. Create the small fixed set of executor streams by successive
+- Resolve the operation seed once: public construction derives it from system
+  time, while a private `Option<u64>` injection point permits deterministic
+  tests. Initialize a root, domain-separated update RNG from that seed. Create
+  the small fixed set of executor streams by successive
   `Xoshiro256PlusPlus::jump()` calls, then retain and advance those streams
   normally. Never reseed per update or repeatedly jump from the initial state
   to catch up with progress.
 - Retain domain-separated `seed_from_u64` streams for initial embedding points.
-- Preserve same-seed reproducibility, but intentionally do not preserve the
-  previous manual-generator embedding values; this is a clean seeded-output
-  compatibility break chosen for the phase.
+- Deterministic tests preserve same-seed reproducibility internally, but seed
+  selection and reproducibility are not part of the public API contract.
 
 ## Progress
 
@@ -229,11 +308,13 @@ Port implementation from `wtsne.hpp`.
 - `wtsne(...)` returns `Result<Array2<f64>>`; the embedding has shape
   `(n_nodes, 2)`.
 - `WtsneOptions` carries perplexity, target update count, repulsion samples,
-  learning rate, initial exaggeration, thread count, quiet setting, and seed.
+  learning rate, initial exaggeration, thread count, and quiet setting. Seed
+  selection is private and automatic for public callers.
   Retained frame schedules are removed; native progress bars are controlled by
   the quiet setting.
-- Tests target public behavior: validation, normalization, finite output,
-  reproducibility for one thread, and successful parallel execution.
+- Tests target public behavior: validation, normalization, finite output, and
+  successful parallel execution. Private optimiser tests may inject a seed for
+  deterministic lifecycle assertions.
 - No Python bindings or CUDA are part of this milestone.
 - Distance constructors return `SparseDistances` and accept `DistanceOptions`,
   whose sparsification field supports `Sparsification::Knn` or
@@ -245,9 +326,10 @@ Port implementation from `wtsne.hpp`.
   names and zero-based COO row, column, and normalized-distance vectors.
 - Use released crates.io `sketchlib = "0.4.1"` for file-compatible `.skm`/`.skd`
   loading and sparse kNN distances.
-- Pair-SNP alignment input retains legacy pairsnp self edges and tie behavior.
-  Accessory input retains legacy sklearn behavior (no self edges, exact kNN,
-  strict threshold filtering).
+- Pair-SNP alignment and standalone accessory input now share exact non-self
+  kNN and strict-threshold semantics through the confirmed distance-efficiency
+  design. This intentionally supersedes the earlier decision to retain legacy
+  pair-SNP self edges and tie expansion.
 - Sketch inputs support kNN only in this phase. Threshold mode is rejected for
   sketches because the released API does not provide a streaming threshold
   operation and dense all-pairs materialization would defeat sparse input.
@@ -257,11 +339,9 @@ Port implementation from `wtsne.hpp`.
 - Use the existing `rust/src/gene.rs` parsing semantics (IUPAC overlap,
   unknown-base matching, and its tested gap handling) rather than duplicating
   the parser.
-- For multi-kmer sketch accessory distances, consume sketchlib's streamed
-  all-pairs output into bounded per-row top-k candidates, avoiding a dense
-  distance matrix while retaining accessory-specific neighbour selection.
-- Single-kmer sketch databases use sketchlib's Jaccard sparse path; accessory
-  selection is rejected unless at least two k-mer lengths are available.
+- Sketch distance input is core-only. The former streamed multi-kmer accessory
+  mode and its `--use-accessory` switch are removed by the distance-efficiency
+  pass.
 
 ## Module seams for the refactor
 
@@ -280,9 +360,9 @@ Port implementation from `wtsne.hpp`.
 - The initial embedding uses domain-separated per-point RNG seeds. SCE update
   streams are persistent disjoint Xoshiro streams created once from a root
   stream with `jump()`, never reseeded or replayed to catch up. Unit sampling
-  uses the full-width `next_u64` output over `[0, 1)`. This retains
-  deterministic single-thread runs while intentionally changing fixed-seed
-  embedding values from the former hand-written xoshiro128+ implementation.
+  uses the full-width `next_u64` output over `[0, 1)`. Private seed injection
+  retains deterministic internal single-thread tests; public operations are
+  automatically seeded from system time.
 
 ## Wasm/async API transition
 
@@ -361,11 +441,11 @@ Port implementation from `wtsne.hpp`.
   library optimization phase renders progress after each round. Interval-driven
   rendering from a separate thread is deferred as a non-priority follow-up.
 - Define that chunk as `const CLI_ADVANCE_CHUNK: usize = 1_000` in the CLI.
-- Advancing with different round-budget partitions should ideally preserve
-  fixed-seed single-thread results, but this is secondary to performance and
-  must not justify added copying, synchronization, or validation overhead.
-- Regression coverage checks budget-partition invariance only in the
-  deterministic single-thread path. Multi-thread tests assert a completed,
+- Advancing with different round-budget partitions should preserve internally
+  seeded single-thread results, but this is secondary to performance and must
+  not justify added copying, synchronization, or validation overhead.
+- Regression coverage may inject a private seed to check budget-partition
+  invariance in the single-thread path. Multi-thread tests assert a completed,
   finite embedding whose completed work is no more than `threads - 1` above
   its requested budget; they do not require coordinate equality or an exact
   final attempt count.
@@ -386,35 +466,22 @@ Port implementation from `wtsne.hpp`.
 
 ---
 
-# Open Questions
-
-- SIMD opportunities? Ideally compiler optimised rather than 'hand-optimised'.
-
----
-
 # Next Task
 
-Start the planned distance-code efficiency pass: keep row-oriented parallel
-construction, replace full per-row sorting with bounded top-k selection, retain
-threshold filtering during generation, and assess the shared alignment/CSV
-distance seam.
+Run the external runtime and peak-RSS benchmark comparison for representative
+alignment and standalone accessory inputs, then inspect the resulting directed
+COO edge sets for the intended exact-k and strict-threshold behavior. No
+in-repository benchmark or performance gate is required by this phase.
 
 # Further tasks
 
 Tasks for later implementation steps:
 
-- Improvement for dists code (from pairsnp or csv):
-  - Refactor: combine dist types (with a trait?), csv just has one bitvec, to keep code paths more similar.
-  - Refactor: remove the --accessory option, and all associated helper
-    code.
-  - Efficiency: parallel iteration should always be over rows to avoid need for a costly flatten, then at the end append all the vecs together
-  - Efficiency: the sparsification is inefficient: for knn use a priority queue in each row as distances are produced, for threshold only keep the item if distance is less than threshold when first calculated. When parallelised over rows as the above point, this change will become easier.
-
-
 - Code and style refactoring. Taking note of house style above, which
   has been ignored.
   - Add a verbose option and logging messages for every step (loading
     files, distances, probabilities, calculating embedding)
+  - Logging with the log package, rather than eprintln.
   - Remove costly checks, especially on long distance vectors. Checking
     of user input paramaters should be done in CLI as part of clap
 
@@ -637,6 +704,73 @@ Verification:
 
 Next session:
 - Begin the distance-code efficiency pass listed under Next Task.
+
+Blockers:
+- None.
+
+## 2026-08-12 (distance-code efficiency design)
+
+Completed:
+- Confirmed uniform exact non-self kNN semantics, deterministic tie selection,
+  directed unordered COO output, strict threshold filtering during generation,
+  and independent row-owned calculation of both symmetric pair directions.
+- Confirmed a private deep row-construction module using a pair-distance
+  closure, positive-k `O(k)` priority queues, zero-k direct collection, and one
+  output-sized final COO assembly pass.
+- Confirmed standalone accessory profiles as one `RoaringBitmap` per sample,
+  retained standalone `--accessory` input, and removed sketch
+  `--use-accessory` scope.
+- Confirmed removal of public/CLI seed settings, private `Option<u64>` seed
+  injection for deterministic tests, and automatic native/browser-wasm system
+  time seeding through `web_time`.
+- Updated `CONTEXT.md`, recorded ADR 0004, reconciled superseded plan language,
+  and defined focused correctness and portability verification. Runtime and
+  peak-RSS benchmarking remain external to the repository task.
+
+Verification:
+- Documentation-only session; `git diff --check` passes. No source or test
+  implementation was started.
+
+Next session:
+- Run the external runtime and peak-RSS benchmark comparison and review the
+  directed COO outputs. No source implementation remains required for this
+  phase.
+
+Blockers:
+- None. Runtime and peak-RSS benchmarking are intentionally external to this
+  repository task.
+
+## 2026-08-12 (distance-code efficiency implementation)
+
+Completed:
+- Added the private row-owned sparse-distance module. Positive-k rows use a
+  bounded `BinaryHeap`, zero-k rows collect all non-self edges directly, and
+  threshold rows filter strictly while distances are generated. Retained rows
+  drain unsorted into one output-sized COO assembly pass.
+- Migrated alignment and standalone accessory constructors behind the shared
+  pair-distance closure seam. Accessory profiles now use `RoaringBitmap` and
+  Jaccard intersection/union counts without dense per-gene vectors.
+- Removed sketch `--use-accessory` and streamed sketch-accessory helpers;
+  sketch constructors and CLI paths are core-only while standalone accessory
+  input remains available.
+- Removed public and CLI seed settings. Public operations resolve one
+  `web_time::SystemTime` seed; private unit tests inject `Option<u64>` for
+  reproducibility and budget-partition checks.
+- Updated public distance/API documentation and focused edge-set, strict
+  threshold, zero-k, directed kNN, and heap-bound tests.
+
+Verification:
+- `cargo test --all-targets --offline`: 29 tests passed.
+- `cargo test --no-default-features --lib --offline`, native build, docs,
+  formatting, both Clippy configurations, feature-free wasm check, CLI help,
+  focused accessory CLI integration, and `git diff --check` passed.
+- Runtime and peak-RSS benchmarking were not added, as agreed; they remain
+  external follow-up work.
+
+Next session:
+- Run the external runtime and peak-RSS benchmark comparison and inspect the
+  directed COO edge sets. No source implementation remains required for this
+  phase.
 
 Blockers:
 - None.

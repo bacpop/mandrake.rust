@@ -2,16 +2,12 @@ use anyhow::{Context, Result, anyhow, bail};
 #[cfg(feature = "native-inputs")]
 use needletail::parse_fastx_file;
 use needletail::{FastxReader, parse_fastx_reader};
-use rayon::prelude::*;
 use std::io::Read;
 #[cfg(feature = "native-inputs")]
 use std::path::Path;
 
 use super::bitvecs::SampleBases;
-use super::{
-    DistanceOptions, SparseDistances, flatten_rows, select_alignment_row,
-    validate_distance_options, with_pool,
-};
+use super::{DistanceOptions, SparseDistances, build_sparse_distances, validate_distance_options};
 
 /// Calculate normalized pair-SNP distances from an already-decompressed FASTA
 /// or FASTQ reader.
@@ -46,28 +42,13 @@ fn pair_snp_distances_from_alignment(
     alignment_len: usize,
     options: &DistanceOptions,
 ) -> Result<SparseDistances> {
-    let n = names.len();
-    let progress = super::distance_progress(options, n);
-    let rows = with_pool(options.threads, || {
-        (0..n)
-            .into_par_iter()
-            .map(|i| {
-                let mut comparisons = Vec::with_capacity(n);
-                for j in 0..n {
-                    let matches = sequences[i].matching_sites(&sequences[j]).len() as usize;
-                    let gaps = sequences[i].either_gap_sites(&sequences[j]).len() as usize;
-                    let comparable = alignment_len.saturating_sub(gaps);
-                    let mismatches = comparable.saturating_sub(matches);
-                    comparisons.push((j, mismatches));
-                }
-                progress.inc(1);
-                select_alignment_row(i, comparisons, alignment_len, options.sparsification)
-            })
-            .collect::<Vec<_>>()
-    })?;
-    progress.finish(None);
-    let (rows, columns, distances) = flatten_rows(rows);
-    SparseDistances::new(names, rows, columns, distances)
+    build_sparse_distances(names, options, move |left, right| {
+        let matches = sequences[left].matching_sites(&sequences[right]).len() as usize;
+        let gaps = sequences[left].either_gap_sites(&sequences[right]).len() as usize;
+        let comparable = alignment_len.saturating_sub(gaps);
+        let mismatches = comparable.saturating_sub(matches);
+        mismatches as f64 / alignment_len as f64
+    })
 }
 
 fn read_alignment(reader: &mut dyn FastxReader) -> Result<(Vec<String>, Vec<SampleBases>, usize)> {
