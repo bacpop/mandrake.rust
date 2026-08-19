@@ -494,8 +494,12 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-- If runtime validation is wanted, run the plotting CLI from the configured
-  `mandrake.rust_py312` environment; no further implementation is required.
+- Integrate the package into a vue package using the rust-wasm-vue-tool skill. Steps:
+    1. just plot the final outcome, allow download of embedding + names file. Allow input of alignment, accessory csv, or skd/skm.Add knn OR threshold, perplexity, max-updates, replusion samples, learning-rate, initial exaggeration as parameters.
+	2. plot in-between frames using polling, as the optimisation runs. Colour by provided label
+	3. add progress percentages
+	4. allow calculation of skd/skm from existing sketchlib wasm binary
+	5. add hdbscan (in rust wasm binary) as an alternative labelling at the final step
 
 ---
 
