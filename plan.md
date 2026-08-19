@@ -89,45 +89,30 @@ Expose:
 
 ## Objective
 
-Apply a narrow code and style refactor: use `simple_logger` with explicit CLI
-verbosity, add concise library-owned phase logging, move scalar CLI validation
-into `clap`, and remove redundant whole-vector validation without changing the
-algorithm or programmatic raw-similarity capability.
+Add a simple Python CLI to `python/plot.py` that loads an embedding/name pair,
+obtains labels from an unheadered two-column TSV or HDBSCAN, and runs all three
+existing plotting functions with the input prefix as the output prefix.
 
 ### Checklist
 
-- [x] Grill and confirm the narrow refactoring scope
-- [x] Confirm logger dependency, levels, flag conflicts, and compatibility aliases
-- [x] Confirm library/CLI logging ownership and phase-message granularity
-- [x] Confirm CLI validation bounds and preserved programmatic API semantics
-- [x] Confirm structural/parser checks and redundant whole-vector checks
-- [x] Confirm no new tests and required documentation updates
-- [x] Replace `env_logger` with `simple_logger` and add `--verbose`/`-v`
-- [x] Add library phase logs, CLI source/output logs, and one total elapsed log
-- [x] Move scalar CLI validation into `clap` and simplify sparsification parsing
-- [x] Remove redundant distance-option validation and full-vector debug scans
-- [x] Update README and CLI-facing documentation
-- [x] Run the existing tests, manual CLI checks, formatting, lint, docs, and diff checks
+- [x] Confirm the CLI input, label-source, output, and verification scope
+- [x] Add the mutually exclusive `--labels` / `--hdbscan` argument interface
+- [x] Load and structurally validate embedding, names, and label TSV inputs
+- [x] Run HDBSCAN cluster generation and all three plotting functions
+- [x] Update README usage and label-file documentation
+- [x] Update plan status, design notes, session log, and next task
 
 ### Current Status
 
 Working on:
 
-The confirmed logging, CLI-validation, and validation-cost refactor is
-complete. The previous distance-code efficiency implementation remains
-unchanged as the baseline.
+The Python plotting CLI and its README documentation are complete. Dedicated
+failure unit tests, CLI execution, and `--help` verification were explicitly
+excluded from this task.
 
 Last verified:
 
-2026-08-12: `cargo test --all-targets --offline` (29 tests),
-`cargo test --no-default-features --lib --offline`,
-`cargo build --all-targets --offline`, `cargo doc --no-deps --offline`,
-`cargo fmt --all -- --check`, `cargo clippy --all-targets --offline -- -D warnings`,
-`cargo clippy --lib --no-default-features --offline -- -D warnings`,
-`cargo check --lib --no-default-features --target wasm32-unknown-unknown
---offline`, `cargo run --offline -- --help`, manual CLI checks for invalid
-perplexity, conflicting logging flags, verbose phase output, quiet output, and
-repeated `-v`, and `git diff --check` pass.
+2026-08-19: static Python compilation with `python3` and `git diff --check`.
 
 Blockers:
 
@@ -136,6 +121,20 @@ None.
 ---
 
 # Design Notes
+
+## Python plotting CLI
+
+- Use a required mutually exclusive `--labels LABELS.tsv` / `--hdbscan` group;
+  the input positional argument is a prefix, and every output keeps that same
+  prefix.
+- User labels are read from an unheadered two-column TSV and aligned by exact
+  sample-name identity to `.names.txt`; duplicate, missing, extra, malformed,
+  or empty sample IDs are rejected before plotting.
+- User labels are ordinary categorical labels (`dbscan=False`); HDBSCAN labels
+  retain the plotting helpers' noise-point behavior and also produce the
+  existing cluster CSV.
+- Verification is intentionally limited to static review and documentation;
+  no CLI invocation, help check, or dedicated failure tests are added.
 
 ## Distance efficiency pass
 
@@ -495,9 +494,8 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-- Run the external runtime and peak-RSS benchmark comparison for representative
-  alignment and standalone accessory inputs, then inspect directed COO edge
-  sets. No in-repository benchmark or performance gate is required.
+- If runtime validation is wanted, run the plotting CLI from the configured
+  `mandrake.rust_py312` environment; no further implementation is required.
 
 ---
 
@@ -822,6 +820,29 @@ Deviations:
 Next session:
 - Run the external runtime and peak-RSS benchmark comparison and inspect the
   directed COO edge sets; no further code is required for this refactor.
+
+Blockers:
+- None.
+
+## 2026-08-19 (Python plotting CLI)
+
+Completed:
+- Added a required mutually exclusive `--labels LABELS.tsv` / `--hdbscan`
+  CLI to `python/plot.py`, with prefix-based embedding and names loading.
+- Added exact sample-name matching for unheadered two-column label TSV files,
+  HDBSCAN cluster-table generation, and dispatch to the HTML, hex-density, and
+  static Matplotlib plotting functions.
+- Documented both label modes, input files, and generated outputs in README.
+
+Verification:
+- Static compilation with `python3` passed.
+- `git diff --check` passed.
+- No CLI invocation, `--help` check, or dedicated failure tests were added,
+  per the confirmed scope.
+
+Next session:
+- If desired, run the CLI in the configured Python environment for runtime
+  validation.
 
 Blockers:
 - None.
