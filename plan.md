@@ -545,7 +545,15 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-- Add intermediate-frame plotting and user-label colouring.
+- Further interface changes:
+  - Add intermediate-frame plotting.
+  - Add user-label colouring.
+  - Improve the output plot on the page to allow interactive zooming on
+    regions, consider using plot.ly for this.
+  - Add a progress bar for the distance phase. This will require some
+    API changes to the rust code.
+  - Change the maximum update default to 1000000. Make the arrows change
+    the iterations in blocks of 1000000 rather than 1.
 - Add browser support for existing `.skd`/`.skm` inputs and sketch generation.
 - Add HDBSCAN labelling in a wasm-compatible boundary and a deterministic Node
   oracle/browser verification harness.
