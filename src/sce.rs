@@ -212,7 +212,7 @@ impl EmbeddingOperationInner {
         EmbeddingProgress::new(self.completed_updates, self.max_updates, self.eq)
     }
 
-    fn is_complete(&self) -> bool {
+    pub(crate) fn is_complete(&self) -> bool {
         self.completed_updates >= self.max_updates
     }
 

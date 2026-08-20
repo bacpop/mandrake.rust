@@ -89,30 +89,38 @@ Expose:
 
 ## Objective
 
-Add a simple Python CLI to `python/plot.py` that loads an embedding/name pair,
-obtains labels from an unheadered two-column TSV or HDBSCAN, and runs all three
-existing plotting functions with the input prefix as the output prefix.
+Create the first working Mandrake browser tool using the `rust-wasm-vue-tool`
+architecture and Sparrowhawk's Vue page conventions. The page must accept an
+alignment or accessory table, run the existing cooperative Rust embedding in a
+Web Worker, show a final two-dimensional plot, report progress, and download
+the embedding and sample names.
 
 ### Checklist
 
-- [x] Confirm the CLI input, label-source, output, and verification scope
-- [x] Add the mutually exclusive `--labels` / `--hdbscan` argument interface
-- [x] Load and structurally validate embedding, names, and label TSV inputs
-- [x] Run HDBSCAN cluster generation and all three plotting functions
-- [x] Update README usage and label-file documentation
-- [x] Update plan status, design notes, session log, and next task
+- [x] Read the web-tool skill and inspect the local Sparrowhawk reference
+- [x] Decide first-pass scope versus deferred browser features
+- [x] Add a wasm-bindgen handle around portable distance loading and `EmbeddingOperation`
+- [x] Add the Vue package, Sparrowhawk-style app shell, and Mandrake page
+- [x] Add a queued Web Worker/driver, final SVG plot, progress, and downloads
+- [x] Document the web tool and first-pass limitations
+- [x] Run the headless/native/wasm checks and the available web build checks
+- [x] Update plan status, design notes, session log, and deferred next task
 
 ### Current Status
 
 Working on:
 
-The Python plotting CLI and its README documentation are complete. Dedicated
-failure unit tests, CLI execution, and `--help` verification were explicitly
-excluded from this task.
+The first browser phase is complete: a worker-driven Vue page runs the
+feature-free wasm core for alignment and accessory inputs and presents a final
+embedding with progress and downloads. Sketch, labels, intermediate frames, and
+HDBSCAN remain deferred as recorded below.
 
 Last verified:
 
-2026-08-19: static Python compilation with `python3` and `git diff --check`.
+2026-08-20: native tests, Clippy, formatting, feature-free wasm check,
+`wasm-pack build`, `npm install`, and `npm run build` passed. `npm install`
+reported transitive audit warnings in the Vue CLI dependency tree; they are
+not a first-pass blocker.
 
 Blockers:
 
@@ -121,6 +129,30 @@ None.
 ---
 
 # Design Notes
+
+## Mandrake web tool first pass
+
+- In scope: a new `www/` Vue 3 package following Sparrowhawk's shell and page
+  layout; a wasm-bindgen stateful handle; alignment and Roary-style accessory
+  byte uploads; kNN or threshold sparsification; perplexity, max updates,
+  repulsion samples, learning rate, and initial exaggeration controls; a
+  queued worker that advances the operation; a final SVG scatter plot; a
+  progress percentage; and downloads of `<prefix>.embedding.txt` and
+  `<prefix>.names.txt`.
+- Out of scope for this phase: existing `.skd`/`.skm` loading, browser sketch
+  generation, intermediate-frame rendering, label-file colouring, and HDBSCAN.
+  These require separate wasm-compatible sketch/label boundaries or additional
+  UI state and become the next implementation phase.
+- The page owns presentation state; the worker owns the wasm handle and is the
+  only code that advances it. Messages are serialized through an explicit
+  promise queue, and progress fields use `completed`/`maximum` rather than a
+  truthy `done` count.
+- The correctness oracle for this phase is the existing native Rust test suite
+  plus the feature-free `wasm32-unknown-unknown` library check. The public
+  operation is intentionally time-seeded, so browser and native coordinates
+  are checked for shape, finiteness, and completion rather than byte equality;
+  a dedicated deterministic Node oracle is deferred with the later browser
+  verification phase.
 
 ## Python plotting CLI
 
@@ -494,12 +526,10 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-- Integrate the package into a vue package using the rust-wasm-vue-tool skill. Steps:
-    1. just plot the final outcome, allow download of embedding + names file. Allow input of alignment, accessory csv, or skd/skm.Add knn OR threshold, perplexity, max-updates, replusion samples, learning-rate, initial exaggeration as parameters.
-	2. plot in-between frames using polling, as the optimisation runs. Colour by provided label
-	3. add progress percentages
-	4. allow calculation of skd/skm from existing sketchlib wasm binary
-	5. add hdbscan (in rust wasm binary) as an alternative labelling at the final step
+- Add browser support for existing `.skd`/`.skm` inputs and sketch generation,
+  then add intermediate-frame plotting and user-label colouring.
+- Add HDBSCAN labelling in a wasm-compatible boundary and a deterministic Node
+  oracle/browser verification harness.
 
 ---
 
@@ -850,3 +880,38 @@ Next session:
 
 Blockers:
 - None.
+
+## 2026-08-20 (Mandrake web first pass)
+
+Completed:
+- Added a wasm-bindgen `MandrakeOperation`/`MandrakeProgress` boundary that
+  reads alignment and accessory bytes, constructs the existing portable sparse
+  distances, advances the cooperative embedding, and exposes final names and
+  coordinates.
+- Added a minimal Sparrowhawk-style Vue package with a 350 px parameter rail,
+  alignment/accessory input selection, kNN/threshold controls, all requested
+  optimisation parameters, a queued worker/driver, progress percentage, final
+  SVG scatter plot, and embedding/name downloads.
+- Documented the browser tool and recorded sketch, intermediate-frame,
+  labelling, and HDBSCAN work as the next phase.
+
+Verification:
+- `cargo test --all-targets --offline`: 29 tests passed.
+- `cargo clippy --all-targets --offline -- -D warnings`,
+  `cargo fmt --all -- --check`,
+  `cargo check --lib --no-default-features --target wasm32-unknown-unknown
+  --offline`, and `git diff --check` passed.
+- `wasm-pack build --target bundler --no-default-features --release` passed.
+- `cd www && npm install` and `npm run build` passed; the generated wasm
+  package and production bundle compile without warnings.
+- `cd www && npm run serve -- --port 8080` served the landing page successfully
+  under the approved local-server check; the server was then stopped.
+
+Next session:
+- Add sketch `.skd`/`.skm` support or sketch generation, then consider
+  intermediate frames, label colouring, HDBSCAN, and a deterministic Node
+  oracle/browser runtime harness.
+
+Blockers:
+- None. `npm install` reports transitive audit warnings in the Vue CLI tree;
+  dependency upgrades are deferred from this first pass.

@@ -122,6 +122,11 @@ impl EmbeddingOperation {
         self.inner.embedding()
     }
 
+    /// Whether the operation has reached its configured update target.
+    pub fn is_complete(&self) -> bool {
+        self.inner.is_complete()
+    }
+
     /// Consume this operation and return its latest embedding without copying.
     ///
     /// A warning is logged when the operation has not completed.

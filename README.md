@@ -26,6 +26,24 @@ python python/plot.py <prefix> --hdbscan
 
 The HDBSCAN mode also writes `<prefix>.embedding_hdbscan_clusters.csv`.
 
+## Browser tool
+
+The first browser interface lives in `www/` and follows the worker-driven Vue
+layout used by [Sparrowhawk](https://github.com/bacpop/sparrowhawk). It accepts
+plain FASTA/FASTQ alignments or Roary-style accessory tables, runs the
+feature-free Rust wasm core locally, plots the final embedding, and downloads
+the embedding and names files.
+
+```sh
+cd www
+npm install
+npm run serve
+```
+
+The browser build requires the Rust `wasm32-unknown-unknown` target and
+`wasm-pack`. Sketch databases, intermediate frames, label colouring, and
+HDBSCAN labelling are planned for a later phase.
+
 ## Citation
 
 See: https://royalsocietypublishing.org/doi/10.1098/rstb.2021.0237

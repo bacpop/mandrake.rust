@@ -4,6 +4,8 @@ pub mod api;
 pub mod distances;
 mod progress;
 mod sce;
+#[cfg(target_family = "wasm")]
+mod wasm;
 
 pub use api::{EmbeddingInput, EmbeddingOperation, EmbeddingProgress, WtsneOptions};
 pub use distances::{
