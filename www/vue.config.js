@@ -3,7 +3,9 @@ const { defineConfig } = require("@vue/cli-service");
 const WasmPackPlugin = require("@wasm-tool/wasm-pack-plugin");
 
 module.exports = defineConfig({
-  publicPath: process.env.NODE_ENV === "production" ? "./" : "/",
+  // Workers load wasm and split chunks from the site root. A root-relative
+  // public path keeps those URLs correct from a worker script under /js/.
+  publicPath: "/",
   assetsDir: "",
   configureWebpack: {
     experiments: {

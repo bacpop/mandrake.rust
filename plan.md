@@ -30,15 +30,13 @@ Before finishing:
 
 ## Goal
 
-Port the C++ package `mandrake` to Rust.
-
-Source:
-- `src/`
-- primarily `src/wtsne_cpu.cpp`
+Port the C++ package `mandrake` to Rust, then integrate it as a wasm
+module in a vue app.
 
 Target:
 - `rust/`
 - standalone Cargo crate
+- `www/` for the vue app.
 
 Out of scope:
 - CUDA (`*.cu`, `*.cuh`)
@@ -89,11 +87,11 @@ Expose:
 
 ## Objective
 
-Create the first working Mandrake browser tool using the `rust-wasm-vue-tool`
-architecture and Sparrowhawk's Vue page conventions. The page must accept an
-alignment or accessory table, run the existing cooperative Rust embedding in a
-Web Worker, show a final two-dimensional plot, report progress, and download
-the embedding and sample names.
+Repair the Mandrake browser tool's wasm startup, file input, and parameter-help
+experience. The worker must initialize the generated wasm module before using
+the operation, the page must accept one alignment or accessory file through a
+Sparrowhawk-style drop zone with suffix-based detection, and each embedding
+parameter must expose an accessible tooltip derived from the CLI contract.
 
 ### Checklist
 
@@ -105,22 +103,28 @@ the embedding and sample names.
 - [x] Document the web tool and first-pass limitations
 - [x] Run the headless/native/wasm checks and the available web build checks
 - [x] Update plan status, design notes, session log, and deferred next task
+- [x] Initialize wasm dynamically inside the worker before constructing an operation
+- [x] Replace source selection with suffix-detecting drag-and-drop input
+- [x] Add accessible tooltips using the CLI parameter descriptions
+- [x] Verify the repaired production bundle and available local-server checks
+- [x] Update plan status, design notes, session log, and deferred next task
 
 ### Current Status
 
 Working on:
 
-The first browser phase is complete: a worker-driven Vue page runs the
-feature-free wasm core for alignment and accessory inputs and presents a final
-embedding with progress and downloads. Sketch, labels, intermediate frames, and
-HDBSCAN remain deferred as recorded below.
+The focused browser repair is complete: the worker dynamically initializes
+wasm, the page detects supported input types from a single-file drop zone, and
+the embedding controls expose accessible CLI-derived tooltips. Intermediate
+frames, labels, sketches, and HDBSCAN remain deferred below.
 
 Last verified:
 
-2026-08-20: native tests, Clippy, formatting, feature-free wasm check,
-`wasm-pack build`, `npm install`, and `npm run build` passed. `npm install`
-reported transitive audit warnings in the Vue CLI dependency tree; they are
-not a first-pass blocker.
+2026-08-20: the repaired `npm run build` passed and emitted the worker,
+split wasm glue chunk, and wasm binary. The worker bundle uses a root-relative
+public path for those assets; `git diff --check` passed. The local Vue server
+also started and served the landing page successfully. `npm install`'s
+transitive audit warnings in the Vue CLI dependency tree remain deferred.
 
 Blockers:
 
@@ -522,12 +526,27 @@ Port implementation from `wtsne.hpp`.
   state without copying, but emits a `WARN` log unless the operation has
   completed.
 
+## Mandrake web repair
+
+- The worker loads `@/pkg/mandrake` through one cached dynamic import before
+  constructing an operation. This lets webpack emit and initialize the async
+  wasm module in the worker instead of calling generated glue with an unset
+  wasm handle.
+- The webpack public path is root-relative so the worker's split JavaScript
+  chunk and wasm binary resolve correctly from scripts under `/js/`.
+- Input type is detected case-insensitively from FASTA/FASTQ (`.fa`, `.fasta`,
+  `.fas`, `.fna`, `.fq`, `.fnq`, `.fastq`) and accessory (`.rtab`, `.tsv`)
+  suffixes. Ambiguous `.txt` files are rejected rather than guessed.
+- Parameter help uses a small keyboard-accessible hover/focus tooltip
+  component populated from the CLI option descriptions; no UI dependency was
+  added for this focused repair.
+
 ---
 
 # Next Task
 
-- Add browser support for existing `.skd`/`.skm` inputs and sketch generation,
-  then add intermediate-frame plotting and user-label colouring.
+- Add intermediate-frame plotting and user-label colouring.
+- Add browser support for existing `.skd`/`.skm` inputs and sketch generation.
 - Add HDBSCAN labelling in a wasm-compatible boundary and a deterministic Node
   oracle/browser verification harness.
 
@@ -915,3 +934,39 @@ Next session:
 Blockers:
 - None. `npm install` reports transitive audit warnings in the Vue CLI tree;
   dependency upgrades are deferred from this first pass.
+
+## 2026-08-20 (Mandrake web repair)
+
+Completed:
+- Replaced the worker's static wasm import with a cached dynamic import and
+  made the webpack public path root-relative so async worker assets resolve
+  correctly.
+- Replaced the source selector and plain file input with an accessible
+  click-or-drop zone, case-insensitive suffix detection, detected-type
+  feedback, and explicit rejection of unsupported or ambiguous suffixes.
+- Added keyboard-accessible hover/focus tooltips for the sparsification and
+  optimisation controls using the descriptions in `src/cli.rs`.
+- Updated the browser README to describe click/drop input and suffix detection.
+
+Verification:
+- `cd www && npm run build` passed; the production output contains the
+  Mandrake worker, its split worker chunk, and a wasm binary. Static checks
+  confirmed the worker uses `/` as its public path and fetches the emitted
+  `.module.wasm` asset.
+- `cd www && npm run serve -- --port 8080 --host 127.0.0.1` started
+  successfully under the approved local-server check, and the landing page
+  responded before the server was stopped.
+- `git diff --check` passed.
+
+Limitations:
+- No headless browser is installed in this environment, so interactive
+  drag/drop, tooltip focus, and a real wasm run were not exercised here; the
+  emitted worker/module paths and build contract were checked statically.
+
+Next session:
+- Add intermediate-frame plotting and user-label colouring.
+- Add browser support for existing `.skd`/`.skm` inputs or sketch generation.
+- Add HDBSCAN labelling and the deterministic Node/browser oracle harness.
+
+Blockers:
+- None. Transitive npm audit warnings remain deferred.

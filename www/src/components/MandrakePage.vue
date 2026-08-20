@@ -15,29 +15,46 @@
       </p>
 
       <div class="control-stack">
-        <label class="control-label" for="source">Distance source</label>
-        <select id="source" v-model="source" class="text-input" :disabled="isRunning">
-          <option value="alignment">Alignment (FASTA/FASTQ)</option>
-          <option value="accessory">Accessory table (Rtab/TSV)</option>
-        </select>
-
-        <label class="control-label" for="input-file">
-          <span>Input file</span>
-          <span class="info-dot" :title="sourceHelp">i</span>
-        </label>
-        <input
-          id="input-file"
-          class="file-input"
-          type="file"
-          :accept="source === 'alignment' ? '.fa,.fasta,.fas,.fq,.fastq,.txt' : '.Rtab,.rtab,.tsv,.txt'"
-          :disabled="isRunning"
-          @change="onFileChange"
+        <div
+          class="drop-zone"
+          :class="{ 'drop-zone-active': isDragActive }"
+          role="button"
+          tabindex="0"
+          :aria-disabled="isRunning"
+          @click="openFilePicker"
+          @keydown.enter.prevent="openFilePicker"
+          @keydown.space.prevent="openFilePicker"
+          @dragenter.prevent="isDragActive = true"
+          @dragover.prevent="isDragActive = true"
+          @dragleave.prevent="isDragActive = false"
+          @drop.prevent="onDrop"
         >
-        <p v-if="selectedFile" class="selected-file">{{ selectedFile.name }}</p>
+          <input
+            ref="fileInput"
+            class="hidden-file-input"
+            type="file"
+            accept=".fa,.fasta,.fas,.fna,.fq,.fnq,.fastq,.rtab,.tsv"
+            :disabled="isRunning"
+            @click.stop
+            @change="onFileChange"
+          >
+          <span class="drop-zone-icon" aria-hidden="true">↑</span>
+          <strong v-if="isDragActive">Drop input here</strong>
+          <strong v-else>Drop or click to upload an input</strong>
+          <span class="drop-zone-help">FASTA/FASTQ alignment or Roary Rtab/TSV</span>
+        </div>
+        <p v-if="selectedFile && source" class="selected-file">
+          <span>{{ selectedFile.name }}</span>
+          <span class="detected-type">{{ sourceLabel }}</span>
+        </p>
+        <p v-if="inputError" class="input-error" role="alert">{{ inputError }}</p>
 
         <div class="section-rule" />
 
-        <label class="control-label" for="sparsification">Sparsification</label>
+        <label class="control-label" for="sparsification">
+          <span>Sparsification</span>
+          <ParameterTooltip text="Choose k-nearest-neighbour or strict normalized distance threshold sparsification." />
+        </label>
         <select id="sparsification" v-model="mode" class="text-input" :disabled="isRunning">
           <option value="knn">k-nearest neighbours</option>
           <option value="threshold">Distance threshold</option>
@@ -45,7 +62,11 @@
 
         <label class="control-label" for="sparsification-value">
           <span>{{ mode === "knn" ? "Neighbours per sample" : "Distance threshold" }}</span>
-          <span class="info-dot" :title="mode === 'knn' ? 'Zero keeps every non-self neighbour.' : 'Edges at or above this normalised distance are discarded.'">i</span>
+          <ParameterTooltip
+            :text="mode === 'knn'
+              ? 'Number of neighbours to retain per sample.'
+              : 'Strict normalized distance threshold (in the range (0, 1]).'"
+          />
         </label>
         <input
           id="sparsification-value"
@@ -60,32 +81,32 @@
 
         <label class="control-label" for="perplexity">
           <span>Perplexity</span>
-          <span class="info-dot" title="Target entropy for conditional probabilities.">i</span>
+          <ParameterTooltip text="Conditional-probability perplexity in the inclusive range 5.0..=100.0." />
         </label>
         <input id="perplexity" v-model.number="perplexity" class="text-input" type="number" min="5" max="100" step="1" :disabled="isRunning">
 
         <label class="control-label" for="max-updates">
           <span>Maximum updates</span>
-          <span class="info-dot" title="Total stochastic optimisation update attempts.">i</span>
+          <ParameterTooltip text="Target number of stochastic update attempts." />
         </label>
         <input id="max-updates" v-model.number="maxUpdates" class="text-input" type="number" min="1" step="100" :disabled="isRunning">
 
         <label class="control-label" for="repulsion-samples">
           <span>Repulsion samples</span>
-          <span class="info-dot" title="Randomly sampled repulsion pairs per update.">i</span>
+          <ParameterTooltip text="Repulsion samples per update attempt." />
         </label>
         <input id="repulsion-samples" v-model.number="repulsionSamples" class="text-input" type="number" min="1" step="1" :disabled="isRunning">
 
         <label class="control-label" for="learning-rate">
           <span>Learning rate</span>
-          <span class="info-dot" title="Initial optimisation learning rate.">i</span>
+          <ParameterTooltip text="Initial learning rate." />
         </label>
         <input id="learning-rate" v-model.number="learningRate" class="text-input" type="number" min="0.0001" step="0.1" :disabled="isRunning">
 
         <label class="check-row" for="initial-exaggeration">
           <input id="initial-exaggeration" v-model="initialExaggeration" type="checkbox" :disabled="isRunning">
           <span>Use initial exaggeration</span>
-          <span class="info-dot" title="Strengthen attraction during the first tenth of optimisation.">i</span>
+          <ParameterTooltip text="Apply initial attraction exaggeration." />
         </label>
       </div>
 
@@ -147,10 +168,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import EmbeddingPlot from "./EmbeddingPlot.vue";
+import ParameterTooltip from "./ParameterTooltip.vue";
 import { MandrakeRunner, type MandrakeProgress, type MandrakeResult, type MandrakeSettings } from "../workers/Mandrake";
 
-const source = ref<"alignment" | "accessory">("alignment");
+type InputSource = "alignment" | "accessory";
+
+const fileInput = ref<HTMLInputElement | null>(null);
+const source = ref<InputSource | null>(null);
 const selectedFile = ref<File | null>(null);
+const isDragActive = ref(false);
+const inputError = ref("");
 const mode = ref<"knn" | "threshold">("knn");
 const sparsificationValue = ref(15);
 const perplexity = ref(30);
@@ -164,31 +191,58 @@ const result = ref<MandrakeResult | null>(null);
 const progress = ref<MandrakeProgress>({ completed: 0, maximum: 0, eq: Number.NaN, complete: false });
 const runner = new MandrakeRunner();
 
-const sourceHelp = computed(() => source.value === "alignment"
-  ? "Plain FASTA or FASTQ records with equal-length sequences."
-  : "A tab-separated Roary-style table beginning with Gene.");
+const sourceLabel = computed(() => source.value === "alignment" ? "Alignment" : "Accessory table");
 
 const progressPercent = computed(() => {
   if (!progress.value.maximum) return 0;
   return Math.min(100, Math.round((progress.value.completed / progress.value.maximum) * 100));
 });
 
-watch(source, () => {
-  selectedFile.value = null;
-  result.value = null;
-  progress.value = { completed: 0, maximum: 0, eq: Number.NaN, complete: false };
-  errorMessage.value = "";
-});
-
 watch(mode, (nextMode) => {
   sparsificationValue.value = nextMode === "knn" ? 15 : 0.5;
 });
 
+function detectSource(filename: string): InputSource | null {
+  const suffix = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  if ([".fa", ".fasta", ".fas", ".fna", ".fq", ".fnq", ".fastq"].includes(suffix)) {
+    return "alignment";
+  }
+  if ([".rtab", ".tsv"].includes(suffix)) {
+    return "accessory";
+  }
+  return null;
+}
+
+function chooseFile(file: File | undefined): void {
+  if (!file) return;
+  const detectedSource = detectSource(file.name);
+  selectedFile.value = null;
+  source.value = null;
+  result.value = null;
+  progress.value = { completed: 0, maximum: 0, eq: Number.NaN, complete: false };
+  errorMessage.value = "";
+  inputError.value = "";
+  if (!detectedSource) {
+    inputError.value = "Unsupported input suffix. Use FASTA/FASTQ (.fa, .fasta, .fas, .fna, .fq, .fnq, .fastq) or Rtab/TSV (.rtab, .tsv).";
+    return;
+  }
+  selectedFile.value = file;
+  source.value = detectedSource;
+}
+
+function openFilePicker(): void {
+  if (!isRunning.value) fileInput.value?.click();
+}
+
+function onDrop(event: DragEvent): void {
+  isDragActive.value = false;
+  if (!isRunning.value) chooseFile(event.dataTransfer?.files[0]);
+}
+
 function onFileChange(event: Event): void {
   const input = event.target as HTMLInputElement;
-  selectedFile.value = input.files?.[0] ?? null;
-  result.value = null;
-  errorMessage.value = "";
+  chooseFile(input.files?.[0]);
+  input.value = "";
 }
 
 function settings(): MandrakeSettings {
@@ -204,7 +258,7 @@ function settings(): MandrakeSettings {
 }
 
 async function runEmbedding(): Promise<void> {
-  if (!selectedFile.value) return;
+  if (!selectedFile.value || !source.value) return;
   isRunning.value = true;
   errorMessage.value = "";
   result.value = null;

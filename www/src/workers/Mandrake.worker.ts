@@ -1,4 +1,6 @@
-import { MandrakeOperation } from "@/pkg/mandrake";
+import type { MandrakeOperation } from "@/pkg/mandrake";
+
+type MandrakeWasm = typeof import("@/pkg/mandrake");
 
 interface Settings {
   mode: "knn" | "threshold";
@@ -30,6 +32,14 @@ type WorkerMessage = StartMessage | AdvanceMessage | ResetMessage;
 
 let operation: MandrakeOperation | null = null;
 let queue = Promise.resolve();
+let wasmPromise: Promise<MandrakeWasm> | null = null;
+
+function loadWasm(): Promise<MandrakeWasm> {
+  if (!wasmPromise) {
+    wasmPromise = import("@/pkg/mandrake");
+  }
+  return wasmPromise;
+}
 
 function reportError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -44,6 +54,7 @@ async function handle(message: WorkerMessage): Promise<void> {
   }
 
   if (message.type === "start") {
+    const { MandrakeOperation } = await loadWasm();
     const bytes = new Uint8Array(message.bytes);
     const settings = message.settings;
     operation = message.source === "alignment"

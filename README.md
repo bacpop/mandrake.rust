@@ -32,7 +32,10 @@ The first browser interface lives in `www/` and follows the worker-driven Vue
 layout used by [Sparrowhawk](https://github.com/bacpop/sparrowhawk). It accepts
 plain FASTA/FASTQ alignments or Roary-style accessory tables, runs the
 feature-free Rust wasm core locally, plots the final embedding, and downloads
-the embedding and names files.
+the embedding and names files. The page accepts one input by click or
+drag-and-drop and detects alignment (`.fa`, `.fasta`, `.fq`, `.fastq`, and
+related FASTA/FASTQ suffixes) versus accessory (`.rtab`/`.tsv`) from the file
+name.
 
 ```sh
 cd www
