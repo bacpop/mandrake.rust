@@ -505,6 +505,7 @@ select:disabled {
 
 .plot-frame {
   margin-top: 22px;
+  min-height: 520px;
   overflow: hidden;
   border: 1px solid #e6ebf0;
   border-radius: 8px;

@@ -130,6 +130,7 @@ fn incomplete_operation_can_transfer_its_partial_embedding() {
 fn public_api_module_exposes_operation_types() {
     let options = mandrake::api::WtsneOptions::default();
     assert_eq!(options.threads, 1);
+    assert_eq!(options.max_updates, 1_000_000);
     assert_eq!(
         mandrake::api::EmbeddingInput::new(vec![0], vec![1], vec![0.1], 2, None)
             .unwrap()

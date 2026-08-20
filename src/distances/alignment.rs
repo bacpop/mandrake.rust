@@ -53,7 +53,9 @@ fn pair_snp_distances_from_alignment(
     })
 }
 
-fn read_alignment(reader: &mut dyn FastxReader) -> Result<(Vec<String>, Vec<SampleBases>, usize)> {
+pub(crate) fn read_alignment(
+    reader: &mut dyn FastxReader,
+) -> Result<(Vec<String>, Vec<SampleBases>, usize)> {
     let mut names = Vec::new();
     let mut sequences = Vec::new();
     let mut alignment_len = None;

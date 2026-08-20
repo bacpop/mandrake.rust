@@ -54,6 +54,87 @@ where
     Ok(result)
 }
 
+/// Sequential row accumulator used by the cooperative wasm distance phase.
+///
+/// The source-specific pair-distance closure is supplied for each bounded
+/// advance, so this type owns only the sparse rows accumulated so far. Native
+/// callers continue to use [`build_sparse_distances`] and its private Rayon
+/// pool.
+#[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
+pub(crate) struct DistanceRowBuilder {
+    names: Vec<String>,
+    sparsification: Sparsification,
+    next_row: usize,
+    retained_rows: Vec<Vec<(usize, f64)>>,
+}
+
+#[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
+impl DistanceRowBuilder {
+    pub(crate) fn new(names: Vec<String>, sparsification: Sparsification) -> Result<Self> {
+        if names.len() < 2 {
+            bail!("at least two sample names are required");
+        }
+        let n = names.len();
+        Ok(Self {
+            names,
+            sparsification,
+            next_row: 0,
+            retained_rows: vec![Vec::new(); n],
+        })
+    }
+
+    pub(crate) fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    pub(crate) fn completed_rows(&self) -> usize {
+        self.next_row
+    }
+
+    pub(crate) fn total_rows(&self) -> usize {
+        self.names.len()
+    }
+
+    pub(crate) fn advance<F>(&mut self, row_budget: usize, pair_distance: F)
+    where
+        F: Fn(usize, usize) -> f64,
+    {
+        let end = self
+            .next_row
+            .saturating_add(row_budget)
+            .min(self.names.len());
+        while self.next_row < end {
+            let row = self.next_row;
+            self.retained_rows[row] =
+                build_row(row, self.names.len(), self.sparsification, &pair_distance);
+            self.next_row += 1;
+        }
+    }
+
+    pub(crate) fn finish(self) -> Result<SparseDistances> {
+        if self.next_row != self.names.len() {
+            bail!(
+                "distance rows are incomplete: {} of {} rows are ready",
+                self.next_row,
+                self.names.len()
+            );
+        }
+
+        let total = self.retained_rows.iter().map(Vec::len).sum();
+        let mut rows = Vec::with_capacity(total);
+        let mut columns = Vec::with_capacity(total);
+        let mut distances = Vec::with_capacity(total);
+        for (row, retained) in self.retained_rows.into_iter().enumerate() {
+            for (column, distance) in retained {
+                rows.push(row as u64);
+                columns.push(column as u64);
+                distances.push(distance);
+            }
+        }
+        SparseDistances::new(self.names, rows, columns, distances)
+    }
+}
+
 fn build_row<F>(
     row: usize,
     n: usize,
@@ -153,7 +234,8 @@ impl TopK {
 
 #[cfg(test)]
 mod tests {
-    use super::{Candidate, TopK};
+    use super::{Candidate, DistanceRowBuilder, TopK};
+    use crate::Sparsification;
 
     #[test]
     fn bounded_heap_never_exceeds_its_limit() {
@@ -165,5 +247,24 @@ mod tests {
             });
             assert!(nearest.heap.len() <= 3);
         }
+    }
+
+    #[test]
+    fn cooperative_rows_are_bounded_and_finish_in_order() {
+        let mut builder = DistanceRowBuilder::new(
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            Sparsification::Knn(1),
+        )
+        .unwrap();
+        builder.advance(0, |left, right| (left.abs_diff(right)) as f64);
+        assert_eq!(builder.completed_rows(), 0);
+        builder.advance(1, |left, right| (left.abs_diff(right)) as f64);
+        assert_eq!(builder.completed_rows(), 1);
+        builder.advance(10, |left, right| (left.abs_diff(right)) as f64);
+        assert_eq!(builder.completed_rows(), 3);
+
+        let distances = builder.finish().unwrap();
+        assert_eq!(distances.names(), ["a", "b", "c"]);
+        assert_eq!(distances.len(), 3);
     }
 }

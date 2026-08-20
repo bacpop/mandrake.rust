@@ -1,8 +1,14 @@
-declare module "@/pkg/mandrake" {
+declare module "@/pkg/index" {
   export class MandrakeProgress {
     readonly completed: number;
     readonly maximum: number;
     readonly eq: number;
+    readonly complete: boolean;
+  }
+
+  export class MandrakeDistanceProgress {
+    readonly completed: number;
+    readonly maximum: number;
     readonly complete: boolean;
   }
 
@@ -27,6 +33,8 @@ declare module "@/pkg/mandrake" {
       learningRate: number,
       initialExaggeration: boolean,
     ): MandrakeOperation;
+    advanceDistances(rowBudget: number): MandrakeDistanceProgress;
+    beginEmbedding(): void;
     advance(roundBudget: number): MandrakeProgress;
     embedding(): Float64Array;
     names(): string;

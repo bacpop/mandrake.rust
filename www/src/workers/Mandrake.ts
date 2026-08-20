@@ -17,6 +17,12 @@ export interface MandrakeProgress {
   complete: boolean;
 }
 
+export interface MandrakeDistanceProgress {
+  completed: number;
+  maximum: number;
+  complete: boolean;
+}
+
 export interface MandrakeResult {
   embedding: Float64Array;
   names: string[];
@@ -25,10 +31,27 @@ export interface MandrakeResult {
   eq: number;
 }
 
-type ProgressHandler = (progress: MandrakeProgress) => void;
+export type MandrakeUpdate =
+  | { phase: "distance"; progress: MandrakeDistanceProgress; names?: string[] }
+  | { phase: "embedding"; progress: MandrakeProgress }
+  | { phase: "frame"; embedding: Float64Array; completed: number; maximum: number };
 
-interface ProgressMessage extends MandrakeProgress {
-  type: "progress";
+type UpdateHandler = (update: MandrakeUpdate) => void;
+
+interface DistanceProgressMessage extends MandrakeDistanceProgress {
+  type: "distance-progress";
+  names: string;
+}
+
+interface EmbeddingProgressMessage extends MandrakeProgress {
+  type: "embedding-progress";
+}
+
+interface FrameMessage {
+  type: "frame";
+  embedding: Float64Array;
+  completed: number;
+  maximum: number;
 }
 
 interface CompleteMessage {
@@ -45,28 +68,37 @@ interface ErrorMessage {
   message: string;
 }
 
+type WorkerMessage =
+  | DistanceProgressMessage
+  | EmbeddingProgressMessage
+  | FrameMessage
+  | CompleteMessage
+  | ErrorMessage;
+
 export class MandrakeRunner {
   private worker: Worker | null = null;
-  private progressHandler: ProgressHandler | null = null;
+  private updateHandler: UpdateHandler | null = null;
   private resolve: ((result: MandrakeResult) => void) | null = null;
   private reject: ((error: Error) => void) | null = null;
+  private distanceRowBudget = 1;
+  private embeddingRoundBudget = 64;
 
   run(
     source: "alignment" | "accessory",
     bytes: Uint8Array,
     settings: MandrakeSettings,
-    onProgress: ProgressHandler,
+    onUpdate: UpdateHandler,
   ): Promise<MandrakeResult> {
     this.cancel();
     const worker = new WorkerMandrake();
     this.worker = worker;
-    this.progressHandler = onProgress;
+    this.updateHandler = onUpdate;
 
     const result = new Promise<MandrakeResult>((resolve, reject) => {
       this.resolve = resolve;
       this.reject = reject;
     });
-    worker.onmessage = (event: MessageEvent<ProgressMessage | CompleteMessage | ErrorMessage>) => {
+    worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
       this.handleMessage(event.data);
     };
     worker.onerror = (event: ErrorEvent) => {
@@ -94,28 +126,68 @@ export class MandrakeRunner {
     }
     this.resolve = null;
     this.reject = null;
-    this.progressHandler = null;
+    this.updateHandler = null;
   }
 
-  private handleMessage(message: ProgressMessage | CompleteMessage | ErrorMessage): void {
+  private handleMessage(message: WorkerMessage): void {
     if (message.type === "error") {
       this.fail(new Error(message.message));
       return;
     }
 
-    if (message.type === "progress") {
-      this.progressHandler?.(message);
-      if (!message.complete) {
-        this.worker?.postMessage({ type: "advance", roundBudget: 64 });
+    if (message.type === "distance-progress") {
+      const progress: MandrakeDistanceProgress = {
+        completed: message.completed,
+        maximum: message.maximum,
+        complete: message.complete,
+      };
+      this.updateHandler?.({
+        phase: "distance",
+        progress,
+        names: message.names ? message.names.split("\n") : [],
+      });
+      this.distanceRowBudget = Math.max(1, Math.ceil(message.maximum / 100));
+      if (message.complete) {
+        this.worker?.postMessage({ type: "begin-embedding" });
+      } else {
+        this.worker?.postMessage({ type: "advance-distance", rowBudget: this.distanceRowBudget });
       }
       return;
     }
 
-    this.progressHandler?.({
-      completed: message.completed,
-      maximum: message.maximum,
-      eq: message.eq,
-      complete: true,
+    if (message.type === "embedding-progress") {
+      const progress: MandrakeProgress = {
+        completed: message.completed,
+        maximum: message.maximum,
+        eq: message.eq,
+        complete: message.complete,
+      };
+      this.updateHandler?.({ phase: "embedding", progress });
+      if (!message.complete) {
+        this.embeddingRoundBudget = Math.max(64, Math.ceil(message.maximum / 100));
+        this.worker?.postMessage({ type: "advance-embedding", roundBudget: this.embeddingRoundBudget });
+      }
+      return;
+    }
+
+    if (message.type === "frame") {
+      this.updateHandler?.({
+        phase: "frame",
+        embedding: message.embedding,
+        completed: message.completed,
+        maximum: message.maximum,
+      });
+      return;
+    }
+
+    this.updateHandler?.({
+      phase: "embedding",
+      progress: {
+        completed: message.completed,
+        maximum: message.maximum,
+        eq: message.eq,
+        complete: true,
+      },
     });
     const result: MandrakeResult = {
       embedding: message.embedding,
@@ -138,6 +210,6 @@ export class MandrakeRunner {
     this.worker = null;
     this.resolve = null;
     this.reject = null;
-    this.progressHandler = null;
+    this.updateHandler = null;
   }
 }

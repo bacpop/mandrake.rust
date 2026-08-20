@@ -1,6 +1,6 @@
-import type { MandrakeOperation } from "@/pkg/mandrake";
+import type { MandrakeOperation } from "@/pkg/index";
 
-type MandrakeWasm = typeof import("@/pkg/mandrake");
+type MandrakeWasm = typeof import("@/pkg/index");
 
 interface Settings {
   mode: "knn" | "threshold";
@@ -19,8 +19,17 @@ interface StartMessage {
   settings: Settings;
 }
 
-interface AdvanceMessage {
-  type: "advance";
+interface AdvanceDistanceMessage {
+  type: "advance-distance";
+  rowBudget: number;
+}
+
+interface BeginEmbeddingMessage {
+  type: "begin-embedding";
+}
+
+interface AdvanceEmbeddingMessage {
+  type: "advance-embedding";
   roundBudget: number;
 }
 
@@ -28,15 +37,22 @@ interface ResetMessage {
   type: "reset";
 }
 
-type WorkerMessage = StartMessage | AdvanceMessage | ResetMessage;
+type WorkerMessage =
+  | StartMessage
+  | AdvanceDistanceMessage
+  | BeginEmbeddingMessage
+  | AdvanceEmbeddingMessage
+  | ResetMessage;
 
 let operation: MandrakeOperation | null = null;
 let queue = Promise.resolve();
 let wasmPromise: Promise<MandrakeWasm> | null = null;
+let nextFrameUpdate = 0;
+let frameInterval = 1;
 
 function loadWasm(): Promise<MandrakeWasm> {
   if (!wasmPromise) {
-    wasmPromise = import("@/pkg/mandrake");
+    wasmPromise = import("@/pkg/index");
   }
   return wasmPromise;
 }
@@ -44,6 +60,27 @@ function loadWasm(): Promise<MandrakeWasm> {
 function reportError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   self.postMessage({ type: "error", message });
+}
+
+function postDistanceProgress(): void {
+  if (!operation) throw new Error("no Mandrake operation is active");
+  const progress = operation.advanceDistances(0);
+  self.postMessage({
+    type: "distance-progress",
+    completed: progress.completed,
+    maximum: progress.maximum,
+    complete: progress.complete,
+    names: operation.names(),
+  });
+}
+
+function postFrame(completed: number, maximum: number): void {
+  if (!operation) throw new Error("no Mandrake operation is active");
+  const embedding = operation.embedding();
+  self.postMessage(
+    { type: "frame", embedding, completed, maximum },
+    { transfer: [embedding.buffer] },
+  );
 }
 
 async function handle(message: WorkerMessage): Promise<void> {
@@ -78,14 +115,7 @@ async function handle(message: WorkerMessage): Promise<void> {
           settings.learningRate,
           settings.initialExaggeration,
         );
-    const progress = operation.advance(0);
-    self.postMessage({
-      type: "progress",
-      completed: progress.completed,
-      maximum: progress.maximum,
-      eq: progress.eq,
-      complete: progress.complete,
-    });
+    postDistanceProgress();
     return;
   }
 
@@ -93,25 +123,67 @@ async function handle(message: WorkerMessage): Promise<void> {
     throw new Error("no Mandrake operation is active");
   }
 
-  const progress = operation.advance(message.roundBudget);
-  if (progress.complete) {
-    const embedding = operation.embedding();
+  if (message.type === "advance-distance") {
+    const progress = operation.advanceDistances(message.rowBudget);
     self.postMessage({
-      type: "complete",
+      type: "distance-progress",
       completed: progress.completed,
       maximum: progress.maximum,
-      eq: progress.eq,
-      embedding,
+      complete: progress.complete,
       names: operation.names(),
-    }, { transfer: [embedding.buffer] });
-  } else {
+    });
+    return;
+  }
+
+  if (message.type === "begin-embedding") {
+    operation.beginEmbedding();
+    const progress = operation.advance(0);
+    frameInterval = Math.max(1, Math.ceil(progress.maximum / 20));
+    nextFrameUpdate = frameInterval;
     self.postMessage({
-      type: "progress",
+      type: "embedding-progress",
       completed: progress.completed,
       maximum: progress.maximum,
       eq: progress.eq,
       complete: progress.complete,
     });
+    postFrame(progress.completed, progress.maximum);
+    return;
+  }
+
+  if (message.type === "advance-embedding") {
+    const progress = operation.advance(message.roundBudget);
+    if (progress.complete) {
+      const embedding = operation.embedding();
+      self.postMessage({
+        type: "embedding-progress",
+        completed: progress.completed,
+        maximum: progress.maximum,
+        eq: progress.eq,
+        complete: true,
+      });
+      self.postMessage({
+        type: "complete",
+        completed: progress.completed,
+        maximum: progress.maximum,
+        eq: progress.eq,
+        embedding,
+        names: operation.names(),
+      }, { transfer: [embedding.buffer] });
+      return;
+    }
+
+    self.postMessage({
+      type: "embedding-progress",
+      completed: progress.completed,
+      maximum: progress.maximum,
+      eq: progress.eq,
+      complete: false,
+    });
+    if (progress.completed >= nextFrameUpdate) {
+      while (nextFrameUpdate <= progress.completed) nextFrameUpdate += frameInterval;
+      postFrame(progress.completed, progress.maximum);
+    }
   }
 }
 

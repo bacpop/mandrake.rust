@@ -49,6 +49,25 @@
         </p>
         <p v-if="inputError" class="input-error" role="alert">{{ inputError }}</p>
 
+        <label class="control-label" for="labels-file">
+          <span>Optional sample labels</span>
+          <ParameterTooltip text="Unheadered sample-name<TAB>label rows. Every input sample must appear exactly once." />
+        </label>
+        <input
+          id="labels-file"
+          ref="labelsInput"
+          class="text-input"
+          type="file"
+          accept=".tsv,.txt"
+          :disabled="isRunning"
+          @change="onLabelsChange"
+        >
+        <p v-if="selectedLabelsFile" class="selected-file">
+          <span>{{ selectedLabelsFile.name }}</span>
+          <span class="detected-type">Labels</span>
+        </p>
+        <p v-if="labelError" class="input-error" role="alert">{{ labelError }}</p>
+
         <div class="section-rule" />
 
         <label class="control-label" for="sparsification">
@@ -89,7 +108,7 @@
           <span>Maximum updates</span>
           <ParameterTooltip text="Target number of stochastic update attempts." />
         </label>
-        <input id="max-updates" v-model.number="maxUpdates" class="text-input" type="number" min="1" step="100" :disabled="isRunning">
+        <input id="max-updates" v-model.number="maxUpdates" class="text-input" type="number" min="1" step="1000000" :disabled="isRunning">
 
         <label class="control-label" for="repulsion-samples">
           <span>Repulsion samples</span>
@@ -118,8 +137,8 @@
       </div>
 
       <p class="sidebar-note">
-        Sketch databases, intermediate frames, labels, and HDBSCAN are planned
-        for a later browser phase.
+        The plot updates live as Mandrake computes. Zoom and pan with the
+        Plotly controls, or provide an optional named TSV to colour samples.
       </p>
     </section>
 
@@ -128,32 +147,50 @@
         {{ errorMessage }}
       </div>
 
-      <div v-if="isRunning || progress.maximum > 0" class="progress-card">
+      <div v-if="isRunning || distanceProgress.maximum > 0" class="progress-card">
         <div class="progress-heading">
-          <span>{{ isRunning ? "Calculating embedding" : "Embedding complete" }}</span>
-          <span>{{ progressPercent }}%</span>
+          <span>Distance phase</span>
+          <span>{{ distancePercent }}%</span>
         </div>
         <div class="progress-track" aria-hidden="true">
-          <div class="progress-fill" :style="{ width: `${progressPercent}%` }" />
+          <div class="progress-fill" :style="{ width: `${distancePercent}%` }" />
         </div>
         <p class="progress-detail">
-          {{ progress.completed.toLocaleString() }} / {{ progress.maximum.toLocaleString() }} updates
-          <span v-if="Number.isFinite(progress.eq)"> · Eq {{ progress.eq.toFixed(4) }}</span>
+          {{ distanceProgress.completed.toLocaleString() }} / {{ distanceProgress.maximum.toLocaleString() }} rows
         </p>
       </div>
 
-      <div v-if="result" class="result-card">
+      <div v-if="isRunning || embeddingProgress.maximum > 0" class="progress-card">
+        <div class="progress-heading">
+          <span>{{ isRunning ? "Embedding phase" : "Embedding complete" }}</span>
+          <span>{{ embeddingPercent }}%</span>
+        </div>
+        <div class="progress-track" aria-hidden="true">
+          <div class="progress-fill" :style="{ width: `${embeddingPercent}%` }" />
+        </div>
+        <p class="progress-detail">
+          {{ embeddingProgress.completed.toLocaleString() }} / {{ embeddingProgress.maximum.toLocaleString() }} updates
+          <span v-if="Number.isFinite(embeddingProgress.eq)"> · Eq {{ embeddingProgress.eq.toFixed(4) }}</span>
+        </p>
+      </div>
+
+      <div v-if="liveEmbedding" class="result-card">
         <div class="result-header">
           <div>
-            <h2>Final embedding</h2>
-            <p>{{ result.names.length.toLocaleString() }} samples · two dimensions</p>
+            <h2>{{ isRunning ? "Embedding in progress" : "Final embedding" }}</h2>
+            <p>{{ sampleNames.length.toLocaleString() }} samples · two dimensions</p>
           </div>
-          <div class="download-row">
+          <div v-if="result" class="download-row">
             <button class="secondary-button" @click="downloadEmbedding">Download embedding</button>
             <button class="secondary-button" @click="downloadNames">Download names</button>
           </div>
         </div>
-        <EmbeddingPlot :embedding="result.embedding" :names="result.names" />
+        <EmbeddingPlot
+          :embedding="liveEmbedding"
+          :names="sampleNames"
+          :labels="labels ?? undefined"
+          :run-key="runKey"
+        />
       </div>
 
       <div v-else-if="!isRunning && !errorMessage" class="empty-state">
@@ -169,33 +206,54 @@
 import { computed, ref, watch } from "vue";
 import EmbeddingPlot from "./EmbeddingPlot.vue";
 import ParameterTooltip from "./ParameterTooltip.vue";
-import { MandrakeRunner, type MandrakeProgress, type MandrakeResult, type MandrakeSettings } from "../workers/Mandrake";
+import {
+  MandrakeRunner,
+  type MandrakeDistanceProgress,
+  type MandrakeProgress,
+  type MandrakeResult,
+  type MandrakeSettings,
+  type MandrakeUpdate,
+} from "../workers/Mandrake";
 
 type InputSource = "alignment" | "accessory";
 
 const fileInput = ref<HTMLInputElement | null>(null);
+const labelsInput = ref<HTMLInputElement | null>(null);
 const source = ref<InputSource | null>(null);
 const selectedFile = ref<File | null>(null);
+const selectedLabelsFile = ref<File | null>(null);
 const isDragActive = ref(false);
 const inputError = ref("");
+const labelError = ref("");
 const mode = ref<"knn" | "threshold">("knn");
 const sparsificationValue = ref(15);
 const perplexity = ref(30);
-const maxUpdates = ref(10_000);
+const maxUpdates = ref(1_000_000);
 const repulsionSamples = ref(5);
 const learningRate = ref(1);
 const initialExaggeration = ref(false);
 const isRunning = ref(false);
 const errorMessage = ref("");
 const result = ref<MandrakeResult | null>(null);
-const progress = ref<MandrakeProgress>({ completed: 0, maximum: 0, eq: Number.NaN, complete: false });
+const liveEmbedding = ref<Float64Array | null>(null);
+const sampleNames = ref<string[]>([]);
+const labels = ref<string[] | null>(null);
+const labelContents = ref<string | null>(null);
+const distanceProgress = ref<MandrakeDistanceProgress>({ completed: 0, maximum: 0, complete: false });
+const embeddingProgress = ref<MandrakeProgress>({ completed: 0, maximum: 0, eq: Number.NaN, complete: false });
+const runKey = ref(0);
 const runner = new MandrakeRunner();
 
 const sourceLabel = computed(() => source.value === "alignment" ? "Alignment" : "Accessory table");
 
-const progressPercent = computed(() => {
-  if (!progress.value.maximum) return 0;
-  return Math.min(100, Math.round((progress.value.completed / progress.value.maximum) * 100));
+const distancePercent = computed(() => {
+  if (!distanceProgress.value.maximum) return 0;
+  return Math.min(100, Math.round((distanceProgress.value.completed / distanceProgress.value.maximum) * 100));
+});
+
+const embeddingPercent = computed(() => {
+  if (!embeddingProgress.value.maximum) return 0;
+  return Math.min(100, Math.round((embeddingProgress.value.completed / embeddingProgress.value.maximum) * 100));
 });
 
 watch(mode, (nextMode) => {
@@ -219,9 +277,15 @@ function chooseFile(file: File | undefined): void {
   selectedFile.value = null;
   source.value = null;
   result.value = null;
-  progress.value = { completed: 0, maximum: 0, eq: Number.NaN, complete: false };
+  liveEmbedding.value = null;
+  sampleNames.value = [];
+  labels.value = null;
+  labelContents.value = null;
+  distanceProgress.value = { completed: 0, maximum: 0, complete: false };
+  embeddingProgress.value = { completed: 0, maximum: 0, eq: Number.NaN, complete: false };
   errorMessage.value = "";
   inputError.value = "";
+  labelError.value = "";
   if (!detectedSource) {
     inputError.value = "Unsupported input suffix. Use FASTA/FASTQ (.fa, .fasta, .fas, .fna, .fq, .fnq, .fastq) or Rtab/TSV (.rtab, .tsv).";
     return;
@@ -245,6 +309,66 @@ function onFileChange(event: Event): void {
   input.value = "";
 }
 
+function onLabelsChange(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  selectedLabelsFile.value = input.files?.[0] ?? null;
+  labels.value = null;
+  labelContents.value = null;
+  labelError.value = "";
+  input.value = "";
+}
+
+function parseLabels(contents: string, names: string[]): string[] {
+  const lines = contents.replace(/\r\n/g, "\n").split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  const labelsByName = new Map<string, string>();
+  lines.forEach((line, index) => {
+    const fields = line.split("\t");
+    if (fields.length !== 2) {
+      throw new Error(`label file row ${index + 1} must contain exactly two tab-separated fields`);
+    }
+    const [name, label] = fields;
+    if (!name) throw new Error(`label file row ${index + 1} has an empty sample name`);
+    if (labelsByName.has(name)) throw new Error(`label file contains duplicate sample name: ${name}`);
+    labelsByName.set(name, label);
+  });
+
+  const nameSet = new Set(names);
+  const missing = names.filter((name) => !labelsByName.has(name));
+  const extra = Array.from(labelsByName.keys()).filter((name) => !nameSet.has(name));
+  if (missing.length || extra.length) {
+    const details = [];
+    if (missing.length) details.push(`missing names: ${missing.join(", ")}`);
+    if (extra.length) details.push(`unknown names: ${extra.join(", ")}`);
+    throw new Error(`label/name mismatch (${details.join("; ")})`);
+  }
+  return names.map((name) => labelsByName.get(name)!);
+}
+
+function handleUpdate(update: MandrakeUpdate): void {
+  if (update.phase === "distance") {
+    distanceProgress.value = update.progress;
+    if (update.names?.length) {
+      sampleNames.value = update.names;
+      if (labelContents.value !== null && labels.value === null) {
+        try {
+          labels.value = parseLabels(labelContents.value, update.names);
+        } catch (error) {
+          labelError.value = error instanceof Error ? error.message : String(error);
+          errorMessage.value = labelError.value;
+          runner.cancel();
+        }
+      }
+    }
+    return;
+  }
+  if (update.phase === "embedding") {
+    embeddingProgress.value = update.progress;
+    return;
+  }
+  liveEmbedding.value = update.embedding;
+}
+
 function settings(): MandrakeSettings {
   return {
     mode: mode.value,
@@ -261,13 +385,23 @@ async function runEmbedding(): Promise<void> {
   if (!selectedFile.value || !source.value) return;
   isRunning.value = true;
   errorMessage.value = "";
+  labelError.value = "";
   result.value = null;
-  progress.value = { completed: 0, maximum: Number(maxUpdates.value), eq: Number.NaN, complete: false };
+  liveEmbedding.value = null;
+  sampleNames.value = [];
+  labels.value = null;
+  labelContents.value = null;
+  distanceProgress.value = { completed: 0, maximum: 0, complete: false };
+  embeddingProgress.value = { completed: 0, maximum: Number(maxUpdates.value), eq: Number.NaN, complete: false };
+  runKey.value += 1;
   try {
+    labelContents.value = selectedLabelsFile.value
+      ? await selectedLabelsFile.value.text()
+      : null;
     const bytes = new Uint8Array(await selectedFile.value.arrayBuffer());
-    result.value = await runner.run(source.value, bytes, settings(), (next) => {
-      progress.value = next;
-    });
+    result.value = await runner.run(source.value, bytes, settings(), handleUpdate);
+    sampleNames.value = result.value.names;
+    liveEmbedding.value = result.value.embedding;
   } catch (error) {
     if (error instanceof Error && error.message !== "Mandrake operation cancelled") {
       errorMessage.value = error.message;

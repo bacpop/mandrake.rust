@@ -47,7 +47,9 @@ pub fn accessory_distances<P: AsRef<Path>>(
     }
 }
 
-fn read_accessory_table<R: Read>(reader: R) -> Result<(Vec<String>, Vec<RoaringBitmap>)> {
+pub(crate) fn read_accessory_table<R: Read>(
+    reader: R,
+) -> Result<(Vec<String>, Vec<RoaringBitmap>)> {
     let mut csv = csv::ReaderBuilder::new()
         .delimiter(b'\t')
         .has_headers(false)
@@ -85,7 +87,7 @@ fn read_accessory_table<R: Read>(reader: R) -> Result<(Vec<String>, Vec<RoaringB
     Ok((names, profiles))
 }
 
-fn jaccard_distance(left: &RoaringBitmap, right: &RoaringBitmap) -> f64 {
+pub(crate) fn jaccard_distance(left: &RoaringBitmap, right: &RoaringBitmap) -> f64 {
     let union = left.union_len(right);
     if union == 0 {
         0.0

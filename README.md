@@ -35,7 +35,11 @@ feature-free Rust wasm core locally, plots the final embedding, and downloads
 the embedding and names files. The page accepts one input by click or
 drag-and-drop and detects alignment (`.fa`, `.fasta`, `.fq`, `.fastq`, and
 related FASTA/FASTQ suffixes) versus accessory (`.rtab`/`.tsv`) from the file
-name.
+name. Distance construction and optimization each have their own progress
+bar; the Plotly WebGL view updates with the latest embedding and supports
+hover, zoom, and pan. An optional labels file uses the same unheadered
+`sample-name<TAB>label` format as the Python plotting CLI and must cover every
+sample exactly once.
 
 ```sh
 cd www
@@ -44,8 +48,8 @@ npm run serve
 ```
 
 The browser build requires the Rust `wasm32-unknown-unknown` target and
-`wasm-pack`. Sketch databases, intermediate frames, label colouring, and
-HDBSCAN labelling are planned for a later phase.
+`wasm-pack`. Sketch databases, sketch generation, HDBSCAN labelling, and a
+deterministic browser coordinate oracle are planned for a later phase.
 
 ## Citation
 

@@ -14,9 +14,17 @@ mod sketch;
 #[cfg(feature = "native-inputs")]
 pub use accessory::accessory_distances;
 pub use accessory::accessory_distances_from_reader;
+#[cfg(target_family = "wasm")]
+pub(crate) use accessory::{jaccard_distance, read_accessory_table};
 #[cfg(feature = "native-inputs")]
 pub use alignment::pair_snp_distances;
 pub use alignment::pair_snp_distances_from_reader;
+#[cfg(target_family = "wasm")]
+pub(crate) use alignment::read_alignment;
+#[cfg(target_family = "wasm")]
+pub(crate) use bitvecs::SampleBases;
+#[cfg(target_family = "wasm")]
+pub(crate) use rows::DistanceRowBuilder;
 pub(crate) use rows::build_sparse_distances;
 #[cfg(all(feature = "native-inputs", feature = "sketchlib"))]
 pub use sketch::{SketchOptions, sketch_distances, sketch_distances_from_fasta_list};

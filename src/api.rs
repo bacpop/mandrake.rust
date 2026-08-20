@@ -160,7 +160,7 @@ impl Default for WtsneOptions {
     fn default() -> Self {
         Self {
             perplexity: 15.0,
-            max_updates: 100_000,
+            max_updates: 1_000_000,
             repulsion_samples: 5,
             learning_rate: 1.0,
             initial_exaggeration: false,

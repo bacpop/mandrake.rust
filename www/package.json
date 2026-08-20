@@ -7,6 +7,7 @@
     "build": "vue-cli-service build"
   },
   "dependencies": {
+    "plotly.js-dist": "^3.3.1",
     "vue": "^3.5.0"
   },
   "devDependencies": {
@@ -14,8 +15,8 @@
     "@vue/cli-plugin-typescript": "~5.0.0",
     "@vue/cli-service": "^5.0.8",
     "@wasm-tool/wasm-pack-plugin": "^1.7.0",
-    "typescript": "^5.3.3",
     "ts-loader": "^9.5.0",
+    "typescript": "^5.3.3",
     "worker-loader": "^3.0.8"
   }
 }

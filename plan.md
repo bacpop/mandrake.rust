@@ -87,11 +87,9 @@ Expose:
 
 ## Objective
 
-Repair the Mandrake browser tool's wasm startup, file input, and parameter-help
-experience. The worker must initialize the generated wasm module before using
-the operation, the page must accept one alignment or accessory file through a
-Sparrowhawk-style drop zone with suffix-based detection, and each embedding
-parameter must expose an accessible tooltip derived from the CLI contract.
+Implement the next browser interface phase: cooperative distance progress,
+live intermediate embedding updates, optional exact-match user labels, an
+interactive Plotly WebGL plot, and one-million-update defaults.
 
 ### Checklist
 
@@ -102,29 +100,30 @@ parameter must expose an accessible tooltip derived from the CLI contract.
 - [x] Add a queued Web Worker/driver, final SVG plot, progress, and downloads
 - [x] Document the web tool and first-pass limitations
 - [x] Run the headless/native/wasm checks and the available web build checks
-- [x] Update plan status, design notes, session log, and deferred next task
-- [x] Initialize wasm dynamically inside the worker before constructing an operation
-- [x] Replace source selection with suffix-detecting drag-and-drop input
-- [x] Add accessible tooltips using the CLI parameter descriptions
-- [x] Verify the repaired production bundle and available local-server checks
+- [x] Record this phase's scope and decisions before source edits
+- [x] Add cooperative wasm distance-row construction and phase progress
+- [x] Add live latest-state embedding messages from the worker
+- [x] Add named TSV labels and deterministic categorical colouring
+- [x] Replace the fixed SVG with an interactive Plotly WebGL plot
+- [x] Change library and web defaults/step to 1,000,000 updates
+- [x] Update web documentation and generated wasm TypeScript declarations
+- [x] Run Rust, wasm, web-build, and available Playwright checks
 - [x] Update plan status, design notes, session log, and deferred next task
 
 ### Current Status
 
 Working on:
 
-The focused browser repair is complete: the worker dynamically initializes
-wasm, the page detects supported input types from a single-file drop zone, and
-the embedding controls expose accessible CLI-derived tooltips. Intermediate
-frames, labels, sketches, and HDBSCAN remain deferred below.
+The browser interface phase is complete. The cooperative distance protocol,
+live Plotly view, named labels, and one-million-update defaults are implemented;
+sketch inputs, HDBSCAN, and deterministic coordinate comparison remain deferred.
 
 Last verified:
 
-2026-08-20: the repaired `npm run build` passed and emitted the worker,
-split wasm glue chunk, and wasm binary. The worker bundle uses a root-relative
-public path for those assets; `git diff --check` passed. The local Vue server
-also started and served the landing page successfully. `npm install`'s
-transitive audit warnings in the Vue CLI dependency tree remain deferred.
+2026-08-20: native tests, Clippy, formatting, feature-free wasm compilation,
+the production Vue build, direct Node wasm execution, and elevated Playwright
+browser runs all passed. The real-size untracked Rtab completed in both Node
+wasm and the browser, producing 1,837 samples and 3,674 coordinates.
 
 Blockers:
 
@@ -134,7 +133,7 @@ None.
 
 # Design Notes
 
-## Mandrake web tool first pass
+## Mandrake web tool first pass (completed)
 
 - In scope: a new `www/` Vue 3 package following Sparrowhawk's shell and page
   layout; a wasm-bindgen stateful handle; alignment and Roary-style accessory
@@ -143,7 +142,7 @@ None.
   queued worker that advances the operation; a final SVG scatter plot; a
   progress percentage; and downloads of `<prefix>.embedding.txt` and
   `<prefix>.names.txt`.
-- Out of scope for this phase: existing `.skd`/`.skm` loading, browser sketch
+- Out of scope for that first pass: existing `.skd`/`.skm` loading, browser sketch
   generation, intermediate-frame rendering, label-file colouring, and HDBSCAN.
   These require separate wasm-compatible sketch/label boundaries or additional
   UI state and become the next implementation phase.
@@ -157,6 +156,28 @@ None.
   are checked for shape, finiteness, and completion rather than byte equality;
   a dedicated deterministic Node oracle is deferred with the later browser
   verification phase.
+
+## Mandrake web interface phase
+
+- Distance construction becomes a wasm-only cooperative state machine: input
+  constructors parse and retain source data, `advanceDistances` computes bounded
+  row batches, and `beginEmbedding` explicitly transitions to SCE. Native
+  distance constructors retain their existing parallel implementation and
+  sparse-output contract.
+- The worker reports distance and embedding progress separately. It emits an
+  initial embedding and then only the latest state at 5% update thresholds;
+  browser history is not retained and no Rust frame schedule is reintroduced.
+- User labels use the Python plotting contract: an optional unheadered
+  `sample-name<TAB>label` file must have exact, unique sample-name coverage.
+  Labels are aligned to embedding order and rendered with deterministic
+  categorical colours.
+- The output plot uses Plotly `scattergl` with responsive zoom/pan/reset,
+  sample-name hover text, equal axis scaling, and cleanup on component removal.
+- `WtsneOptions::default` and the web control default to 1,000,000 updates; the
+  web number input steps by 1,000,000. Existing explicit smaller test budgets
+  remain unchanged.
+- This phase does not add `.skd`/`.skm` loading, sketch generation, HDBSCAN, or
+  deterministic coordinate comparison; those remain the following task.
 
 ## Python plotting CLI
 
@@ -545,15 +566,8 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-- Further interface changes:
-  - Add intermediate-frame plotting.
-  - Add user-label colouring.
-  - Improve the output plot on the page to allow interactive zooming on
-    regions, consider using plot.ly for this.
-  - Add a progress bar for the distance phase. This will require some
-    API changes to the rust code.
-  - Change the maximum update default to 1000000. Make the arrows change
-    the iterations in blocks of 1000000 rather than 1.
+- Add support for gz/bz2 files. Check the Sparrowhawk FASTA reader for
+  how to achieve this.
 - Add browser support for existing `.skd`/`.skm` inputs and sketch generation.
 - Add HDBSCAN labelling in a wasm-compatible boundary and a deterministic Node
   oracle/browser verification harness.
@@ -978,3 +992,43 @@ Next session:
 
 Blockers:
 - None. Transitive npm audit warnings remain deferred.
+
+## 2026-08-20 (Mandrake web interface phase)
+
+Completed:
+- Added a wasm-only cooperative distance-row builder and explicit
+  `advanceDistances`/`beginEmbedding` transitions while preserving native
+  parallel distance construction and sparse-row semantics.
+- Extended the queued worker with separate distance/embedding progress and
+  transferable latest-state frames at bounded update thresholds.
+- Added exact-match named TSV labels, deterministic categorical colours, and a
+  Plotly WebGL scatter with hover, zoom, pan, responsive sizing, and cleanup.
+- Changed the library and web defaults to 1,000,000 updates with one-million
+  numeric steps, updated declarations/docs, and added focused cooperative-row
+  and default-value coverage.
+
+Verification:
+- `cargo fmt --all -- --check`, `cargo test --all-targets --offline`,
+  `cargo clippy --all-targets --offline -- -D warnings`, and the feature-free
+  wasm check passed.
+- `cd www && npm run build` passed. Plotly adds the expected approximately
+  4.7 MiB vendor bundle and npm reports existing transitive audit warnings.
+- A direct Node-target wasm run using `tests/fixtures/gene_presence_absence.Rtab`
+  completed with 1,837 samples, 3,674 coordinates, and 8 updates.
+- Playwright Chromium smoke passed for labels, two Plotly traces, 10 px minimum
+  plot text, and a changed zoom range; the same browser path completed the
+  supplied 1,837-sample Rtab with no page or console errors.
+- `git diff --check` passed.
+
+Limitations:
+- The Playwright smoke was run from an installed local CLI after downloading
+  its Chromium binary; no permanent e2e harness was added. Deterministic
+  coordinate comparison remains deferred with HDBSCAN.
+
+Next session:
+- Add `.skd`/`.skm` loading or browser sketch generation, then add HDBSCAN
+  labelling and the deterministic Node/browser oracle harness.
+
+Blockers:
+- None. Plotly bundle-size and npm audit warnings are recorded for later
+  dependency/performance work.
