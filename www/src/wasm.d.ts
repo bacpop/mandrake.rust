@@ -1,5 +1,7 @@
 declare module "@/pkg/index" {
   export function clusterEmbedding(embedding: Float64Array): Int32Array;
+  export function sketchKmerLengths(file: File): Uint32Array;
+  export function sketchKmerLengthsBytes(metadata: Uint8Array): Uint32Array;
 
   export class MandrakeProgress {
     readonly completed: number;
@@ -54,6 +56,32 @@ declare module "@/pkg/index" {
       repulsionSamples: number,
       learningRate: number,
       initialExaggeration: boolean,
+    ): MandrakeOperation;
+    static fromSketchFiles(
+      metadataFile: File,
+      dataFile: File,
+      mode: string,
+      value: number,
+      perplexity: number,
+      maxUpdates: number,
+      repulsionSamples: number,
+      learningRate: number,
+      initialExaggeration: boolean,
+      distanceKind: string,
+      jaccardKmer: number,
+    ): MandrakeOperation;
+    static fromSketch(
+      metadata: Uint8Array,
+      data: Uint8Array,
+      mode: string,
+      value: number,
+      perplexity: number,
+      maxUpdates: number,
+      repulsionSamples: number,
+      learningRate: number,
+      initialExaggeration: boolean,
+      distanceKind: string,
+      jaccardKmer: number,
     ): MandrakeOperation;
     advanceDistances(rowBudget: number): MandrakeDistanceProgress;
     beginEmbedding(): void;

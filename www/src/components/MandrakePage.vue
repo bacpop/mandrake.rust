@@ -10,8 +10,9 @@
       </div>
 
       <p class="help-copy">
-        Upload a genomic alignment or a Roary-style accessory table. Mandrake
-        calculates sparse distances and embeds the samples entirely in this page.
+        Upload an alignment, a Roary-style accessory table, or a paired sketchlib
+        database. Mandrake calculates sparse distances and embeds the samples
+        entirely in this page.
       </p>
 
       <div class="control-stack">
@@ -33,7 +34,8 @@
             ref="fileInput"
             class="hidden-file-input"
             type="file"
-            accept=".fa,.fasta,.fas,.fna,.fq,.fnq,.fastq,.rtab,.tsv,.fa.gz,.fasta.gz,.fas.gz,.fna.gz,.fq.gz,.fnq.gz,.fastq.gz,.rtab.gz,.tsv.gz,.gz"
+            accept=".fa,.fasta,.fas,.fna,.fq,.fnq,.fastq,.rtab,.tsv,.skm,.skd,.fa.gz,.fasta.gz,.fas.gz,.fna.gz,.fq.gz,.fnq.gz,.fastq.gz,.rtab.gz,.tsv.gz,.gz"
+            multiple
             :disabled="isRunning"
             @click.stop
             @change="onFileChange"
@@ -41,12 +43,23 @@
           <span class="drop-zone-icon" aria-hidden="true">↑</span>
           <strong v-if="isDragActive">Drop input here</strong>
           <strong v-else>Drop or click to upload an input</strong>
-          <span class="drop-zone-help">FASTA/FASTQ or Roary Rtab/TSV, plain or gzip-compressed</span>
+          <span class="drop-zone-help">FASTA/FASTQ, Roary Rtab/TSV, or paired .skm/.skd files</span>
         </div>
-        <p v-if="selectedFile && source" class="selected-file">
+        <p v-if="selectedFile && source && source !== 'sketch'" class="selected-file">
           <span>{{ selectedFile.name }}</span>
           <span class="detected-type">{{ sourceLabel }}</span>
         </p>
+        <div v-if="source === 'sketch'" class="selected-file-stack">
+          <p class="selected-file">
+            <span>{{ sketchMetadataFile?.name ?? "No .skm metadata file" }}</span>
+            <span class="detected-type">Sketch metadata</span>
+          </p>
+          <p class="selected-file">
+            <span>{{ sketchDataFile?.name ?? "No .skd data file" }}</span>
+            <span class="detected-type">Sketch data</span>
+          </p>
+          <p v-if="sketchMetadataLoading" class="progress-detail">Reading sketch metadata…</p>
+        </div>
         <p v-if="inputError" class="input-error" role="alert">{{ inputError }}</p>
 
         <label class="control-label" for="labels-file">
@@ -74,13 +87,34 @@
           <ParameterTooltip text="Cluster the final two-dimensional embedding with the fixed browser HDBSCAN preset." />
         </label>
 
+        <div v-if="source === 'sketch'" class="sketch-controls">
+          <label class="control-label" for="sketch-distance">
+            <span>Sketch distance</span>
+            <ParameterTooltip text="Use the core-distance regression or a selected-k Jaccard distance from the sketch database." />
+          </label>
+          <select id="sketch-distance" v-model="sketchDistance" class="text-input" :disabled="isRunning">
+            <option value="core" :disabled="sketchKmers.length < 2">Core distance (requires at least two k-mers)</option>
+            <option value="jaccard">Jaccard distance</option>
+          </select>
+
+          <template v-if="sketchDistance === 'jaccard'">
+            <label class="control-label" for="sketch-kmer">
+              <span>Jaccard k-mer</span>
+              <ParameterTooltip text="Select one k-mer length stored in the uploaded .skm metadata." />
+            </label>
+            <select id="sketch-kmer" v-model.number="jaccardKmer" class="text-input" :disabled="isRunning || !sketchKmers.length">
+              <option v-for="kmer in sketchKmers" :key="kmer" :value="kmer">{{ kmer }}</option>
+            </select>
+          </template>
+        </div>
+
         <div class="section-rule" />
 
         <label class="control-label" for="sparsification">
           <span>Sparsification</span>
           <ParameterTooltip text="Choose k-nearest-neighbour or strict normalized distance threshold sparsification." />
         </label>
-        <select id="sparsification" v-model="mode" class="text-input" :disabled="isRunning">
+        <select id="sparsification" v-model="mode" class="text-input" :disabled="isRunning || source === 'sketch'">
           <option value="knn">k-nearest neighbours</option>
           <option value="threshold">Distance threshold</option>
         </select>
@@ -136,7 +170,7 @@
       </div>
 
       <div class="action-row">
-        <button class="primary-button" :disabled="!selectedFile || isRunning" @click="runEmbedding">
+        <button class="primary-button" :disabled="!canRun || isRunning" @click="runEmbedding">
           {{ isRunning ? "Embedding…" : "Run Mandrake" }}
         </button>
         <button v-if="isRunning" class="secondary-button" @click="cancel">Cancel</button>
@@ -151,6 +185,14 @@
     <section class="results-column">
       <div v-if="errorMessage" class="message message-error" role="alert">
         {{ errorMessage }}
+      </div>
+
+      <div v-if="sketchLoading" class="progress-card" role="status">
+        <div class="progress-heading">
+          <span>Sketch distance phase</span>
+          <span>Working…</span>
+        </div>
+        <p class="progress-detail">Loading the paired sketch database and calculating kNN distances</p>
       </div>
 
       <div v-if="isRunning || distanceProgress.maximum > 0" class="progress-card">
@@ -247,16 +289,23 @@ import {
   type MandrakeDistanceProgress,
   type MandrakeProgress,
   type MandrakeResult,
+  type MandrakeSketchFiles,
   type MandrakeSettings,
   type MandrakeUpdate,
 } from "../workers/Mandrake";
 
-type InputSource = "alignment" | "accessory";
+type InputSource = "alignment" | "accessory" | "sketch";
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const labelsInput = ref<HTMLInputElement | null>(null);
 const source = ref<InputSource | null>(null);
 const selectedFile = ref<File | null>(null);
+const sketchMetadataFile = ref<File | null>(null);
+const sketchDataFile = ref<File | null>(null);
+const sketchKmers = ref<number[]>([]);
+const sketchMetadataLoading = ref(false);
+const sketchDistance = ref<"core" | "jaccard">("core");
+const jaccardKmer = ref<number | null>(null);
 const selectedLabelsFile = ref<File | null>(null);
 const isDragActive = ref(false);
 const inputError = ref("");
@@ -278,6 +327,7 @@ const labels = ref<string[] | null>(null);
 const hdbscanLabels = shallowRef<Int32Array | null>(null);
 const colourMode = ref<"manual" | "clusters">("manual");
 const clustering = ref(false);
+const sketchLoading = ref(false);
 const clusterError = ref("");
 const labelContents = ref<string | null>(null);
 const distanceProgress = ref<MandrakeDistanceProgress>({ completed: 0, maximum: 0, complete: false });
@@ -285,7 +335,15 @@ const embeddingProgress = ref<MandrakeProgress>({ completed: 0, maximum: 0, eq: 
 const runKey = ref(0);
 const runner = new MandrakeRunner();
 
-const sourceLabel = computed(() => source.value === "alignment" ? "Alignment" : "Accessory table");
+const sourceLabel = computed(() => source.value === "alignment"
+  ? "Alignment"
+  : source.value === "accessory"
+    ? "Accessory table"
+    : "Sketch database");
+
+const canRun = computed(() => source.value === "sketch"
+  ? sketchMetadataFile.value !== null && sketchDataFile.value !== null
+  : selectedFile.value !== null && source.value !== null);
 
 const distancePercent = computed(() => {
   if (!distanceProgress.value.maximum) return 0;
@@ -323,7 +381,11 @@ watch(mode, (nextMode) => {
   sparsificationValue.value = nextMode === "knn" ? 15 : 0.5;
 });
 
-function detectSource(filename: string): InputSource | null {
+watch(source, (nextSource) => {
+  if (nextSource === "sketch") mode.value = "knn";
+});
+
+function detectSource(filename: string): Exclude<InputSource, "sketch"> | null {
   const lowerFilename = filename.toLowerCase();
   const sourceFilename = lowerFilename.endsWith(".gz")
     ? lowerFilename.slice(0, -3)
@@ -338,11 +400,15 @@ function detectSource(filename: string): InputSource | null {
   return null;
 }
 
-function chooseFile(file: File | undefined): void {
-  if (!file) return;
-  const detectedSource = detectSource(file.name);
+function detectSketchKind(filename: string): "metadata" | "data" | null {
+  const lowerFilename = filename.toLowerCase();
+  if (lowerFilename.endsWith(".skm")) return "metadata";
+  if (lowerFilename.endsWith(".skd")) return "data";
+  return null;
+}
+
+function resetResultState(): void {
   selectedFile.value = null;
-  source.value = null;
   result.value = null;
   liveEmbedding.value = null;
   sampleNames.value = [];
@@ -350,6 +416,7 @@ function chooseFile(file: File | undefined): void {
   hdbscanLabels.value = null;
   colourMode.value = "manual";
   clustering.value = false;
+  sketchLoading.value = false;
   clusterError.value = "";
   labelContents.value = null;
   distanceProgress.value = { completed: 0, maximum: 0, complete: false };
@@ -357,8 +424,95 @@ function chooseFile(file: File | undefined): void {
   errorMessage.value = "";
   inputError.value = "";
   labelError.value = "";
+}
+
+function clearInputSelection(): void {
+  selectedFile.value = null;
+  sketchMetadataFile.value = null;
+  sketchDataFile.value = null;
+  sketchKmers.value = [];
+  sketchMetadataLoading.value = false;
+  sketchDistance.value = "core";
+  jaccardKmer.value = null;
+  source.value = null;
+}
+
+async function inspectSketchMetadata(file: File): Promise<void> {
+  sketchMetadataLoading.value = true;
+  sketchKmers.value = [];
+  jaccardKmer.value = null;
+  try {
+    const kmers = await runner.inspectSketchKmers(file);
+    if (sketchMetadataFile.value !== file) return;
+    sketchKmers.value = kmers;
+    jaccardKmer.value = kmers[0] ?? null;
+    sketchDistance.value = kmers.length >= 2 ? "core" : "jaccard";
+  } catch (error) {
+    if (sketchMetadataFile.value === file) {
+      inputError.value = error instanceof Error ? error.message : String(error);
+    }
+  } finally {
+    if (sketchMetadataFile.value === file) sketchMetadataLoading.value = false;
+  }
+}
+
+function chooseFiles(files: File[]): void {
+  if (!files.length) return;
+  const sketchKinds = files.map((file) => detectSketchKind(file.name));
+  const hasSketch = sketchKinds.some((kind) => kind !== null);
+  if (hasSketch) {
+    if (files.some((file, index) => sketchKinds[index] === null)) {
+      clearInputSelection();
+      resetResultState();
+      inputError.value = "Sketch input requires one .skm metadata file and one .skd data file; do not mix sketch and sequence inputs.";
+      return;
+    }
+    if (source.value !== "sketch") {
+      resetResultState();
+      clearInputSelection();
+      source.value = "sketch";
+    } else {
+      resetResultState();
+    }
+    let metadataFile: File | undefined;
+    let dataFile: File | undefined;
+    const metadataFiles = files.filter((_, index) => sketchKinds[index] === "metadata");
+    const dataFiles = files.filter((_, index) => sketchKinds[index] === "data");
+    if (metadataFiles.length > 1 || dataFiles.length > 1) {
+      inputError.value = "Select at most one .skm metadata file and one .skd data file.";
+      return;
+    }
+    files.forEach((file, index) => {
+      if (sketchKinds[index] === "metadata") metadataFile = file;
+      if (sketchKinds[index] === "data") dataFile = file;
+    });
+    if (metadataFile && sketchMetadataFile.value) {
+      inputError.value = "Only one .skm metadata file can be selected.";
+    } else if (dataFile && sketchDataFile.value) {
+      inputError.value = "Only one .skd data file can be selected.";
+    } else {
+      inputError.value = "";
+      if (metadataFile) {
+        sketchMetadataFile.value = metadataFile;
+        void inspectSketchMetadata(metadataFile);
+      }
+      if (dataFile) sketchDataFile.value = dataFile;
+    }
+    return;
+  }
+
+  if (files.length !== 1) {
+    clearInputSelection();
+    resetResultState();
+    inputError.value = "Select one FASTA/FASTQ or Rtab/TSV file, or a paired .skm/.skd database.";
+    return;
+  }
+  const file = files[0];
+  const detectedSource = detectSource(file.name);
+  clearInputSelection();
+  resetResultState();
   if (!detectedSource) {
-    inputError.value = "Unsupported input suffix. Use FASTA/FASTQ (.fa, .fasta, .fas, .fna, .fq, .fnq, .fastq) or Rtab/TSV (.rtab, .tsv), optionally followed by .gz.";
+    inputError.value = "Unsupported input suffix. Use FASTA/FASTQ or Rtab/TSV, optionally followed by .gz, or select one .skm and one .skd file.";
     return;
   }
   selectedFile.value = file;
@@ -371,12 +525,12 @@ function openFilePicker(): void {
 
 function onDrop(event: DragEvent): void {
   isDragActive.value = false;
-  if (!isRunning.value) chooseFile(event.dataTransfer?.files[0]);
+  if (!isRunning.value) chooseFiles(Array.from(event.dataTransfer?.files ?? []));
 }
 
 function onFileChange(event: Event): void {
   const input = event.target as HTMLInputElement;
-  chooseFile(input.files?.[0]);
+  chooseFiles(Array.from(input.files ?? []));
   input.value = "";
 }
 
@@ -417,7 +571,12 @@ function parseLabels(contents: string, names: string[]): string[] {
 }
 
 function handleUpdate(update: MandrakeUpdate): void {
+  if (update.phase === "sketch") {
+    sketchLoading.value = true;
+    return;
+  }
   if (update.phase === "distance") {
+    sketchLoading.value = false;
     distanceProgress.value = update.progress;
     if (update.names?.length) {
       sampleNames.value = update.names;
@@ -446,7 +605,7 @@ function handleUpdate(update: MandrakeUpdate): void {
 
 function settings(): MandrakeSettings {
   return {
-    mode: mode.value,
+    mode: source.value === "sketch" ? "knn" : mode.value,
     value: Number(sparsificationValue.value),
     perplexity: Number(perplexity.value),
     maxUpdates: Number(maxUpdates.value),
@@ -454,11 +613,13 @@ function settings(): MandrakeSettings {
     learningRate: Number(learningRate.value),
     initialExaggeration: initialExaggeration.value,
     hdbscan: runHdbscan.value,
+    sketchDistance: sketchDistance.value,
+    jaccardKmer: jaccardKmer.value ?? 0,
   };
 }
 
 async function runEmbedding(): Promise<void> {
-  if (!selectedFile.value || !source.value) return;
+  if (!canRun.value || !source.value) return;
   isRunning.value = true;
   errorMessage.value = "";
   labelError.value = "";
@@ -469,6 +630,7 @@ async function runEmbedding(): Promise<void> {
   hdbscanLabels.value = null;
   colourMode.value = "manual";
   clustering.value = false;
+  sketchLoading.value = false;
   clusterError.value = "";
   labelContents.value = null;
   distanceProgress.value = { completed: 0, maximum: 0, complete: false };
@@ -478,7 +640,17 @@ async function runEmbedding(): Promise<void> {
     labelContents.value = selectedLabelsFile.value
       ? await selectedLabelsFile.value.text()
       : null;
-    result.value = await runner.run(source.value, selectedFile.value, settings(), handleUpdate);
+    if (source.value === "sketch") {
+      if (!sketchMetadataFile.value || !sketchDataFile.value) return;
+      const files: MandrakeSketchFiles = {
+        metadata: sketchMetadataFile.value,
+        data: sketchDataFile.value,
+      };
+      result.value = await runner.runSketch(files, settings(), handleUpdate);
+    } else if (selectedFile.value) {
+      result.value = await runner.run(source.value, selectedFile.value, settings(), handleUpdate);
+    }
+    if (!result.value) return;
     sampleNames.value = result.value.names;
     liveEmbedding.value = result.value.embedding;
     hdbscanLabels.value = result.value.hdbscanLabels;
@@ -497,6 +669,7 @@ async function runEmbedding(): Promise<void> {
 function cancel(): void {
   runner.cancel();
   isRunning.value = false;
+  sketchLoading.value = false;
 }
 
 function downloadText(filename: string, contents: string, type = "text/plain;charset=utf-8"): void {
@@ -512,6 +685,11 @@ function downloadText(filename: string, contents: string, type = "text/plain;cha
 }
 
 function outputPrefix(): string {
+  if (source.value === "sketch") {
+    return (sketchMetadataFile.value?.name ?? sketchDataFile.value?.name ?? "mandrake")
+      .replace(/\.skm$/i, "")
+      .replace(/\.skd$/i, "");
+  }
   const filename = selectedFile.value?.name ?? "mandrake";
   return filename.replace(/\.[^.]+$/, "");
 }

@@ -31,9 +31,10 @@ The HDBSCAN mode also writes `<prefix>.embedding_hdbscan_clusters.csv`.
 The first browser interface lives in `www/` and follows the worker-driven Vue
 layout used by [Sparrowhawk](https://github.com/bacpop/sparrowhawk). It accepts
 plain or gzip-compressed FASTA/FASTQ alignments and Roary-style accessory
-tables, runs the feature-free Rust wasm core locally, plots the final
-embedding, and downloads the embedding and names files. The page accepts one
-input by click or drag-and-drop and detects alignment (`.fa`, `.fasta`, `.fq`,
+tables, runs the Rust wasm core locally, plots the final embedding, and
+downloads the embedding and names files. The page accepts one regular input or
+a paired sketch database by click or drag-and-drop and detects alignment (`.fa`,
+`.fasta`, `.fq`,
 `.fastq`, and related FASTA/FASTQ suffixes) versus accessory (`.rtab`/`.tsv`),
 with an optional `.gz` suffix, from the file name. Gzip data is read and
 decompressed inside the worker as the parser consumes it. Distance
@@ -46,6 +47,11 @@ The `Run HDBSCAN after embedding` option applies a fixed, deterministic preset t
 the final two-dimensional embedding. The result reports the number of non-noise
 clusters, can switch between manual and HDBSCAN colours, renders noise separately,
 and offers a `<prefix>.embedding_hdbscan_clusters.csv` download.
+The drop zone also accepts a paired current-format sketchlib database: add one
+`.skm` metadata file and its matching `.skd` data file, together or separately.
+These files use sketchlib's new 16-bit-bin format; legacy 14-bit databases are
+rejected. Core distances are available when the database stores at least two
+k-mer lengths, while Jaccard distances expose a selector for the stored k-mer.
 
 ```sh
 cd www
@@ -61,9 +67,12 @@ npm run playwright:install
 npm run test:e2e
 ```
 
-The browser build requires the Rust `wasm32-unknown-unknown` target and
-`wasm-pack`. Sketch databases and sketch generation are planned for a later
-phase.
+The browser build requires the Rust `wasm32-unknown-unknown` target,
+`wasm-pack`, and the checked-out `sketchlib.rust` submodule:
+
+```sh
+git submodule update --init --recursive
+```
 
 The deterministic wasm HDBSCAN oracle can be run after building a Node-target
 package:
@@ -71,6 +80,14 @@ package:
 ```sh
 wasm-pack build --target nodejs --no-default-features --out-dir /tmp/mandrake-wasm-node
 node scripts/hdbscan_oracle.mjs /tmp/mandrake-wasm-node
+```
+
+The paired-sketch wasm smoke can be run with a Node-target package as well:
+
+```sh
+cargo build --lib --target wasm32-unknown-unknown --no-default-features --features wasm-sketchlib
+wasm-bindgen target/wasm32-unknown-unknown/debug/mandrake.wasm --target nodejs --out-dir /tmp/mandrake-wasm-sketch
+node tests/sketch_wasm_smoke.mjs /tmp/mandrake-wasm-sketch
 ```
 
 ## Citation

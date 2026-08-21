@@ -1,5 +1,9 @@
 //! WebAssembly boundary for the browser Mandrake tool.
 
+#[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+use crate::distances::{
+    SketchDistanceKind, sketch_distances_from_bytes, sketch_kmer_lengths as inspect_sketch_kmers,
+};
 use crate::{
     DistanceOptions, EmbeddingInput, EmbeddingOperation, SparseDistances, Sparsification,
     WtsneOptions,
@@ -195,6 +199,14 @@ fn wasm_file_reader(file: web_sys::File) -> Result<WasmFileReader, JsValue> {
     }
 }
 
+#[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+fn wasm_file_bytes(file: web_sys::File) -> Result<Vec<u8>, JsValue> {
+    let mut file = WebSysFile::new(file);
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(js_error)?;
+    Ok(bytes)
+}
+
 enum OperationState {
     Distances(PendingDistance),
     Transitioning,
@@ -220,6 +232,82 @@ fn operation_from_distances(
     let (names, rows, columns, values) = distances.into_parts();
     let input = EmbeddingInput::new(rows, columns, values, names.len(), None).map_err(js_error)?;
     EmbeddingOperation::new(input, &options).map_err(js_error)
+}
+
+#[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+#[allow(clippy::too_many_arguments)]
+fn sketch_operation(
+    metadata_file: web_sys::File,
+    data_file: web_sys::File,
+    mode: &str,
+    value: f64,
+    perplexity: f64,
+    max_updates: u32,
+    repulsion_samples: u32,
+    learning_rate: f64,
+    initial_exaggeration: bool,
+    distance_kind: &str,
+    jaccard_kmer: u32,
+) -> Result<MandrakeOperation, JsValue> {
+    let metadata = wasm_file_bytes(metadata_file)?;
+    let data = wasm_file_bytes(data_file)?;
+    sketch_operation_bytes(
+        &metadata,
+        &data,
+        mode,
+        value,
+        perplexity,
+        max_updates,
+        repulsion_samples,
+        learning_rate,
+        initial_exaggeration,
+        distance_kind,
+        jaccard_kmer,
+    )
+}
+
+#[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+#[allow(clippy::too_many_arguments)]
+fn sketch_operation_bytes(
+    metadata: &[u8],
+    data: &[u8],
+    mode: &str,
+    value: f64,
+    perplexity: f64,
+    max_updates: u32,
+    repulsion_samples: u32,
+    learning_rate: f64,
+    initial_exaggeration: bool,
+    distance_kind: &str,
+    jaccard_kmer: u32,
+) -> Result<MandrakeOperation, JsValue> {
+    let (distance_options, wtsne_options) = options(
+        mode,
+        value,
+        perplexity,
+        max_updates,
+        repulsion_samples,
+        learning_rate,
+        initial_exaggeration,
+    )?;
+    let distance_kind = match distance_kind {
+        "core" => SketchDistanceKind::Core,
+        "jaccard" => SketchDistanceKind::Jaccard(jaccard_kmer as usize),
+        _ => {
+            return Err(JsValue::from_str(
+                "sketch distance must be 'core' or 'jaccard'",
+            ));
+        }
+    };
+    let distances = sketch_distances_from_bytes(metadata, data, &distance_options, distance_kind)
+        .map_err(js_error)?;
+    let names = distances.names.clone();
+    let operation = operation_from_distances(distances, wtsne_options)?;
+    Ok(MandrakeOperation {
+        names,
+        wtsne_options: None,
+        state: OperationState::Embedding(operation),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -481,6 +569,72 @@ impl MandrakeOperation {
         )
     }
 
+    /// Read paired current-format sketchlib files and prepare the embedding.
+    #[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+    #[wasm_bindgen(js_name = fromSketchFiles)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_sketch_files(
+        metadata_file: web_sys::File,
+        data_file: web_sys::File,
+        mode: &str,
+        value: f64,
+        perplexity: f64,
+        max_updates: u32,
+        repulsion_samples: u32,
+        learning_rate: f64,
+        initial_exaggeration: bool,
+        distance_kind: &str,
+        jaccard_kmer: u32,
+    ) -> Result<MandrakeOperation, JsValue> {
+        console_error_panic_hook::set_once();
+        sketch_operation(
+            metadata_file,
+            data_file,
+            mode,
+            value,
+            perplexity,
+            max_updates,
+            repulsion_samples,
+            learning_rate,
+            initial_exaggeration,
+            distance_kind,
+            jaccard_kmer,
+        )
+    }
+
+    /// Parse paired sketchlib bytes for Node and non-browser wasm callers.
+    #[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+    #[wasm_bindgen(js_name = fromSketch)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_sketch(
+        metadata: &[u8],
+        data: &[u8],
+        mode: &str,
+        value: f64,
+        perplexity: f64,
+        max_updates: u32,
+        repulsion_samples: u32,
+        learning_rate: f64,
+        initial_exaggeration: bool,
+        distance_kind: &str,
+        jaccard_kmer: u32,
+    ) -> Result<MandrakeOperation, JsValue> {
+        console_error_panic_hook::set_once();
+        sketch_operation_bytes(
+            metadata,
+            data,
+            mode,
+            value,
+            perplexity,
+            max_updates,
+            repulsion_samples,
+            learning_rate,
+            initial_exaggeration,
+            distance_kind,
+            jaccard_kmer,
+        )
+    }
+
     /// Advance a bounded number of sparse-distance rows.
     #[wasm_bindgen(js_name = advanceDistances)]
     pub fn advance_distances(
@@ -569,6 +723,27 @@ impl MandrakeOperation {
     pub fn is_complete(&self) -> bool {
         matches!(&self.state, OperationState::Embedding(operation) if operation.is_complete())
     }
+}
+
+/// Return k-mer lengths stored in a current-format sketch metadata file.
+#[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+#[wasm_bindgen(js_name = sketchKmerLengths)]
+pub fn sketch_kmer_lengths(file: web_sys::File) -> Result<Vec<u32>, JsValue> {
+    console_error_panic_hook::set_once();
+    let bytes = wasm_file_bytes(file)?;
+    inspect_sketch_kmers(&bytes)
+        .map(|kmers| kmers.into_iter().map(|kmer| kmer as u32).collect())
+        .map_err(js_error)
+}
+
+/// Return k-mer lengths from sketch metadata bytes for Node wasm callers.
+#[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+#[wasm_bindgen(js_name = sketchKmerLengthsBytes)]
+pub fn sketch_kmer_lengths_bytes(metadata: &[u8]) -> Result<Vec<u32>, JsValue> {
+    console_error_panic_hook::set_once();
+    inspect_sketch_kmers(metadata)
+        .map(|kmers| kmers.into_iter().map(|kmer| kmer as u32).collect())
+        .map_err(js_error)
 }
 
 #[wasm_bindgen]

@@ -5,6 +5,8 @@ const accessoryFixture = path.resolve(
   __dirname,
   "../../tests/fixtures/gene_presence_absence.Rtab.gz",
 );
+const sketchMetadataFixture = path.resolve(__dirname, "../../tests/fixtures/sketches.skm");
+const sketchDataFixture = path.resolve(__dirname, "../../tests/fixtures/sketches.skd");
 
 function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
@@ -19,6 +21,25 @@ test("tracked gzip accessory input reaches a final embedding", async ({ page }) 
   const errors = collectBrowserErrors(page);
   await page.goto("/", { waitUntil: "networkidle" });
   await page.locator('input[type="file"]').first().setInputFiles(accessoryFixture);
+  await page.locator("#max-updates").fill("8");
+  await page.getByRole("button", { name: "Run Mandrake" }).click();
+
+  await expect(page.getByText("Final embedding", { exact: true })).toBeVisible({ timeout: 150_000 });
+  await expect(page.locator(".js-plotly-plot")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("paired current-format sketch files use the Jaccard wasm path", async ({ page }) => {
+  const errors = collectBrowserErrors(page);
+  await page.goto("/", { waitUntil: "networkidle" });
+  const input = page.locator('input[type="file"]').first();
+  await input.setInputFiles(sketchMetadataFixture);
+  await expect(page.getByText("sketches.skm", { exact: true })).toBeVisible();
+  await input.setInputFiles(sketchDataFixture);
+
+  await expect(page.locator("#sketch-distance")).toHaveValue("jaccard");
+  await expect(page.locator("#sketch-kmer")).toHaveValue("21");
+  await expect(page.getByText("sketches.skd", { exact: true })).toBeVisible();
   await page.locator("#max-updates").fill("8");
   await page.getByRole("button", { name: "Run Mandrake" }).click();
 

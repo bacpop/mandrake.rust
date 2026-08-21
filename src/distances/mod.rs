@@ -10,6 +10,8 @@ mod bitvecs;
 mod rows;
 #[cfg(all(feature = "native-inputs", feature = "sketchlib"))]
 mod sketch;
+#[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+mod sketch_wasm;
 
 #[cfg(feature = "native-inputs")]
 pub use accessory::accessory_distances;
@@ -28,6 +30,10 @@ pub(crate) use rows::DistanceRowBuilder;
 pub(crate) use rows::build_sparse_distances;
 #[cfg(all(feature = "native-inputs", feature = "sketchlib"))]
 pub use sketch::{SketchOptions, sketch_distances, sketch_distances_from_fasta_list};
+#[cfg(all(target_family = "wasm", feature = "wasm-sketchlib"))]
+pub(crate) use sketch_wasm::{
+    SketchDistanceKind, sketch_distances_from_bytes, sketch_kmer_lengths,
+};
 
 /// A sparse distance matrix in coordinate (COO) form.
 ///

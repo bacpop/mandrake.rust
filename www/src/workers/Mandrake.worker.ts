@@ -11,6 +11,8 @@ interface Settings {
   learningRate: number;
   initialExaggeration: boolean;
   hdbscan: boolean;
+  sketchDistance: "core" | "jaccard";
+  jaccardKmer: number;
 }
 
 interface StartMessage {
@@ -18,6 +20,18 @@ interface StartMessage {
   source: "alignment" | "accessory";
   file: File;
   settings: Settings;
+}
+
+interface StartSketchMessage {
+  type: "start-sketch";
+  metadata: File;
+  data: File;
+  settings: Settings;
+}
+
+interface InspectSketchMessage {
+  type: "inspect-sketch";
+  file: File;
 }
 
 interface AdvanceDistanceMessage {
@@ -40,6 +54,8 @@ interface ResetMessage {
 
 type WorkerMessage =
   | StartMessage
+  | StartSketchMessage
+  | InspectSketchMessage
   | AdvanceDistanceMessage
   | BeginEmbeddingMessage
   | AdvanceEmbeddingMessage
@@ -119,6 +135,35 @@ async function handle(message: WorkerMessage): Promise<void> {
           settings.learningRate,
           settings.initialExaggeration,
         );
+    postDistanceProgress();
+    return;
+  }
+
+  if (message.type === "inspect-sketch") {
+    const wasm = await loadWasm();
+    const kmers = wasm.sketchKmerLengths(message.file);
+    self.postMessage({ type: "sketch-metadata", kmers });
+    return;
+  }
+
+  if (message.type === "start-sketch") {
+    const { MandrakeOperation } = await loadWasm();
+    const settings = message.settings;
+    runHdbscan = settings.hdbscan;
+    self.postMessage({ type: "sketch-loading" });
+    operation = MandrakeOperation.fromSketchFiles(
+      message.metadata,
+      message.data,
+      settings.mode,
+      settings.value,
+      settings.perplexity,
+      settings.maxUpdates,
+      settings.repulsionSamples,
+      settings.learningRate,
+      settings.initialExaggeration,
+      settings.sketchDistance,
+      settings.jaccardKmer,
+    );
     postDistanceProgress();
     return;
   }

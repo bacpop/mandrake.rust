@@ -25,7 +25,7 @@ module.exports = defineConfig({
         (Plugin) =>
           new Plugin({
             crateDirectory: path.resolve(__dirname, ".."),
-            extraArgs: "--no-default-features",
+            extraArgs: "--no-default-features --features wasm-sketchlib",
             outDir: path.resolve(__dirname, "./src/pkg"),
             forceMode: "production",
           }),

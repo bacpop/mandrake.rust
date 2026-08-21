@@ -9,6 +9,13 @@ export interface MandrakeSettings {
   learningRate: number;
   initialExaggeration: boolean;
   hdbscan: boolean;
+  sketchDistance: "core" | "jaccard";
+  jaccardKmer: number;
+}
+
+export interface MandrakeSketchFiles {
+  metadata: File;
+  data: File;
 }
 
 export interface MandrakeProgress {
@@ -35,6 +42,7 @@ export interface MandrakeResult {
 }
 
 export type MandrakeUpdate =
+  | { phase: "sketch" }
   | { phase: "distance"; progress: MandrakeDistanceProgress; names?: string[] }
   | { phase: "embedding"; progress: MandrakeProgress }
   | { phase: "clustering" }
@@ -45,6 +53,15 @@ type UpdateHandler = (update: MandrakeUpdate) => void;
 interface DistanceProgressMessage extends MandrakeDistanceProgress {
   type: "distance-progress";
   names: string;
+}
+
+interface SketchLoadingMessage {
+  type: "sketch-loading";
+}
+
+interface SketchMetadataMessage {
+  type: "sketch-metadata";
+  kmers: number[];
 }
 
 interface EmbeddingProgressMessage extends MandrakeProgress {
@@ -79,6 +96,8 @@ interface ErrorMessage {
 }
 
 type WorkerMessage =
+  | SketchLoadingMessage
+  | SketchMetadataMessage
   | DistanceProgressMessage
   | EmbeddingProgressMessage
   | ClusteringMessage
@@ -120,6 +139,51 @@ export class MandrakeRunner {
     return result;
   }
 
+  runSketch(
+    files: MandrakeSketchFiles,
+    settings: MandrakeSettings,
+    onUpdate: UpdateHandler,
+  ): Promise<MandrakeResult> {
+    this.cancel();
+    const worker = new WorkerMandrake();
+    this.worker = worker;
+    this.updateHandler = onUpdate;
+
+    const result = new Promise<MandrakeResult>((resolve, reject) => {
+      this.resolve = resolve;
+      this.reject = reject;
+    });
+    worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
+      this.handleMessage(event.data);
+    };
+    worker.onerror = (event: ErrorEvent) => {
+      this.fail(new Error(event.message || "Mandrake worker failed"));
+    };
+
+    worker.postMessage({ type: "start-sketch", metadata: files.metadata, data: files.data, settings });
+    return result;
+  }
+
+  inspectSketchKmers(file: File): Promise<number[]> {
+    const worker = new WorkerMandrake();
+    return new Promise<number[]>((resolve, reject) => {
+      worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
+        if (event.data.type === "sketch-metadata") {
+          worker.terminate();
+          resolve(event.data.kmers);
+        } else if (event.data.type === "error") {
+          worker.terminate();
+          reject(new Error(event.data.message));
+        }
+      };
+      worker.onerror = (event: ErrorEvent) => {
+        worker.terminate();
+        reject(new Error(event.message || "Mandrake worker failed"));
+      };
+      worker.postMessage({ type: "inspect-sketch", file });
+    });
+  }
+
   cancel(): void {
     if (this.worker) {
       this.worker.terminate();
@@ -136,6 +200,15 @@ export class MandrakeRunner {
   private handleMessage(message: WorkerMessage): void {
     if (message.type === "error") {
       this.fail(new Error(message.message));
+      return;
+    }
+
+    if (message.type === "sketch-loading") {
+      this.updateHandler?.({ phase: "sketch" });
+      return;
+    }
+
+    if (message.type === "sketch-metadata") {
       return;
     }
 

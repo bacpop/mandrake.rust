@@ -335,6 +335,21 @@ select:disabled {
   white-space: nowrap;
 }
 
+.selected-file-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sketch-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #e6ebf0;
+}
+
 .detected-type {
   flex: 0 0 auto;
   border-radius: 999px;

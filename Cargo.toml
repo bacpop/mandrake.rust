@@ -6,7 +6,8 @@ edition = "2024"
 [features]
 default = ["native-inputs", "sketchlib", "cli"]
 native-inputs = ["dep:bzip2", "needletail/compression"]
-sketchlib = ["dep:sketchlib"]
+sketchlib = ["dep:sketchlib_native"]
+wasm-sketchlib = ["dep:sketchlib_wasm"]
 progress = ["dep:indicatif"]
 cli = ["native-inputs", "sketchlib", "dep:clap", "dep:simple_logger", "progress"]
 
@@ -25,7 +26,8 @@ needletail = { version = "0.5", default-features = false }
 rayon = "1.10"
 rand_xoshiro = "0.6"
 roaring = "0.10"
-sketchlib = { version = "0.4.1", optional = true }
+sketchlib_native = { package = "sketchlib", version = "0.4.1", optional = true }
+sketchlib_wasm = { package = "sketchlib", path = "sketchlib.rust", optional = true }
 web-time = "1.1"
 
 [lib]

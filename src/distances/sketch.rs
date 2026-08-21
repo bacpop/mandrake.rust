@@ -6,6 +6,7 @@ use sketchlib::hashing::HashType;
 use sketchlib::io::NeedletailIterator;
 use sketchlib::sketch::multisketch::MultiSketch;
 use sketchlib::sketch::{SketchingOpts, sketch_data};
+use sketchlib_native as sketchlib;
 use std::path::{Path, PathBuf};
 
 use super::{

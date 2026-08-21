@@ -87,10 +87,10 @@ Expose:
 
 ## Objective
 
-Add a reproducible Playwright test harness for the browser tool. The harness
-must start the Vue dev server itself, use repository-relative tracked fixtures,
-exercise the gzip accessory path and HDBSCAN result controls, and report page or
-console errors without waiting for the slow compressed alignment fixture.
+Add browser support for paired, current-format sketchlib `.skm`/`.skd` inputs.
+The drop zone must accept both files, expose Core or Jaccard distances (with a
+stored-k-mer selector for Jaccard), and run the new-format `BB=16` sketchlib
+distance path through the existing wasm embedding workflow.
 
 ### Checklist
 
@@ -100,28 +100,38 @@ console errors without waiting for the slow compressed alignment fixture.
 - [x] Add Python-compatible cluster CSV generation and download
 - [x] Add native, Node-wasm, and Chromium verification for labels and downloads
 - [x] Add the local Playwright dependency, config, and reproducible browser tests
+- [x] Add the `sparrowhawk-dev` sketchlib submodule and wasm-compatible sketch bridge
+- [x] Add paired `.skm`/`.skd` drop-zone state and Core/Jaccard controls
+- [x] Connect sketch distances to the worker and existing embedding workflow
+- [x] Verify native, wasm, Node, and Chromium sketch paths
+- [x] Move the sketchlib gitlink to the merged upstream `sparrowhawk-dev`
+  commit and rerun the affected verification
 - [x] Update plan status, design notes, session log, and next task
 
 ### Current Status
 
 Completed:
 
-The HDBSCAN final-embedding phase is complete. This phase adds a committed
-Playwright harness around the existing browser workflows; it deliberately tests
-the tracked `.Rtab.gz` fixture but does not wait for the slow `.fas.gz` fixture.
+The Playwright and HDBSCAN phases are complete. This phase adds paired sketch
+database uploads using the remote `sparrowhawk-dev` sketchlib implementation;
+only new-format 16-bit-bin databases are supported.
+
+The sketchlib compatibility changes are now pinned through the merged upstream
+`sparrowhawk-dev` commit. The submodule is clean and no local compatibility
+patch is required.
 
 Last verified:
 
-2026-08-21: the previous phase's native tests and Clippy, feature-free wasm
-checks, production Vue build, deterministic Node wasm oracle, compressed real
-fixture, and temporary Chromium HDBSCAN smoke passed; the committed Playwright
-suite now passes both focused Chromium tests.
+2026-08-21: the native Mandrake and complete submodule test suites, host and
+feature-gated wasm checks, both Clippy checks, the Node sketch oracle,
+production Vue build, and all three focused Chromium tests passed against
+upstream merge commit `da9c69edc00931e0a1593e1f3de14630a5746825`.
 
 Blockers:
 
 No implementation blockers. The `wasm-bindgen-file-reader` GPL-3.0 licensing
-follow-up remains deferred from the gzip phase. Browser binaries remain an
-external Playwright cache installed by `npm run playwright:install`.
+follow-up remains deferred. The one-k-mer Core-distance limitation and the
+absence of a checked-in multi-k-mer fixture remain documented phase limits.
 
 ---
 
@@ -252,6 +262,41 @@ external Playwright cache installed by `npm run playwright:install`.
   coverage fast without changing production defaults.
 - Playwright browser binaries remain outside the repository and are installed
   explicitly with `npm run playwright:install` (Chromium only).
+
+## Browser sketch database phase (completed)
+
+- Add `sketchlib.rust` as a git submodule from the remote
+  `sparrowhawk-dev` branch, pinned at its resolved commit. Mandrake uses the
+  submodule path for the native sketch feature and a separate wasm sketch
+  feature; the unrelated local sketchlib checkout is not used.
+- Extend the submodule-facing bridge with byte-backed `.skm`/`.skd` loading,
+  current-format validation, metadata k-mer inspection, and a fixed
+  `self_dists_knn_generic::<16>` distance wrapper. Legacy 14-bit databases and
+  sketch threshold sparsification are rejected with recoverable errors.
+- The browser drop zone accepts one `.skm` and one `.skd`, together or in
+  separate additions. Core distance is the default for multi-k-mer databases;
+  metadata inspection switches single-k-mer inputs to Jaccard and disables the
+  unsupported Core option. Jaccard exposes a selector populated from metadata,
+  and the paired basename is used for output downloads.
+- Sketch distance construction is a synchronous worker phase with an
+  indeterminate loading message, followed by the existing cooperative
+  embedding, label, HDBSCAN, and download flow. No browser sketch generation is
+  included.
+- Verification covers native sketch tests, the Node wasm Jaccard path and
+  recoverable single-k-mer Core boundary, a generated current-format two-k-mer
+  Core/Jaccard smoke, and pair upload/final embedding in the committed
+  Chromium suite.
+
+## Upstream sketchlib sync (completed)
+
+- Fetch `origin/sparrowhawk-dev` after the compatibility changes merge and pin
+  the parent gitlink to merge commit
+  `da9c69edc00931e0a1593e1f3de14630a5746825`, which contains the
+  `spk-new-db` implementation and its public wasm bridge APIs.
+- Keep the submodule working tree clean and detached at the pinned commit; no
+  Mandrake-side compatibility patch or branch-specific source overlay remains.
+- Reuse the existing native, wasm, Node, production-build, and Chromium checks
+  to confirm that the upstream merge is behaviorally equivalent for Mandrake.
 
 ## Python plotting CLI
 
@@ -640,9 +685,9 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-- Add HDBSCAN labelling (https://crates.io/crates/hdbscan) in a wasm-compatible
-  boundary and a deterministic Node oracle/browser verification harness.
-- Add browser support for existing `.skd`/`.skm` inputs and sketch generation.
+- No implementation phase remains. If continuing, add a checked-in two-k-mer
+  BB=16 fixture for a permanent Core-distance browser regression; the current
+  Node smoke still generates that fixture temporarily.
 
 ---
 
@@ -1262,3 +1307,86 @@ Next session:
 Blockers:
 - No implementation blockers. Resolve the `wasm-bindgen-file-reader` GPL-3.0
   licensing/distribution decision before release.
+
+## 2026-08-21 (browser sketch database phase)
+
+Completed:
+- Added the `sparrowhawk-dev` `sketchlib.rust` submodule at remote commit
+  `53cfe23cce0b6d490f175e5e1ecc72d0802c6f2f`, keeping native Mandrake's
+  crates.io sketch feature separate from the wasm path. The submodule bridge
+  now reads paired bytes, validates current 16-bit-bin metadata, exposes
+  `self_dists_knn_generic::<16>`, and preserves legacy native behavior.
+- Added paired `.skm`/`.skd` picker and drag/drop state, asynchronous metadata
+  k-mer inspection, Core/Jaccard controls, single-k-mer Core protection, and
+  paired-prefix downloads. Sketch operations run in the existing worker and
+  feed the embedding, labels, HDBSCAN, and download lifecycle.
+- Added the Node byte API and `tests/sketch_wasm_smoke.mjs`, plus a committed
+  Chromium test that adds the tracked `.skm` and `.skd` files separately,
+  selects the metadata k-mer, completes an embedding, and fails on browser
+  errors. README documentation now describes the submodule and format limits.
+
+Verification:
+- `cargo test --offline` passed 32 Mandrake tests; the complete
+  `cargo test --manifest-path sketchlib.rust/Cargo.toml --offline` suite also
+  passed. Host and wasm Clippy with `-D warnings`, formatting, and the
+  feature-gated `wasm32-unknown-unknown` check/build passed.
+- A direct Node-target wasm package passed `node tests/sketch_wasm_smoke.mjs`:
+  the tracked 616-sample current database completed Jaccard and returned a
+  recoverable Core error for its single stored k-mer. A generated current
+  two-k-mer database completed both Core and Jaccard paths with finite output.
+- `cd www && npm run build` passed, and `npm run test:e2e` passed all three
+  Chromium tests in 33 seconds: gzip accessory completion, paired sketch
+  completion, and HDBSCAN/CSV controls. `git diff --check` passed.
+
+Limitations and deviations:
+- Core distance is unavailable for one-k-mer databases because sketchlib's
+  regression requires at least two k-mer lengths; the UI switches those files
+  to Jaccard and reports the same boundary from wasm.
+- The submodule compatibility changes are currently a working-tree patch on
+  the requested remote commit and should be upstreamed before distributing a
+  fresh clone. The `wasm-bindgen-file-reader` GPL-3.0 licensing decision stays
+  a release follow-up.
+
+Next session:
+- No scheduled implementation task. Upstream/pin the sketchlib compatibility
+  patch and add a checked-in multi-k-mer fixture if a Core browser regression
+  test is required.
+
+Blockers:
+- None for this implementation phase.
+
+## 2026-08-21 (upstream sketchlib sync)
+
+Completed:
+- Fetched `origin/sparrowhawk-dev` and confirmed merge commit
+  `da9c69edc00931e0a1593e1f3de14630a5746825` contains the previously local
+  `spk-new-db` compatibility implementation.
+- Checked the submodule out at that merge commit, staged the parent gitlink,
+  and confirmed the submodule working tree is clean.
+- Updated the Current Status, Design Notes, blockers, and Next Task to record
+  that the upstream merge supersedes the local compatibility patch.
+
+Verification:
+- `cargo test --offline` passed all 32 Mandrake tests.
+- `cargo test --manifest-path sketchlib.rust/Cargo.toml --offline` passed the
+  complete sketchlib suite.
+- Host Clippy, wasm feature-free and `wasm-sketchlib` checks, wasm Clippy,
+  formatting, and `git diff --check` passed.
+- The direct Node-target package passed
+  `node tests/sketch_wasm_smoke.mjs /private/tmp/mandrake-wasm-sketch`.
+- `cd www && npm run build` passed with only the existing bundle-size and npm
+  audit warnings; `npm run test:e2e` passed all three Chromium tests in 29.5
+  seconds.
+
+Limitations and deviations:
+- The one-k-mer fixture still exercises Jaccard and the recoverable Core error;
+  a checked-in multi-k-mer BB=16 fixture remains deferred.
+- The GPL-3.0 licensing/distribution decision for
+  `wasm-bindgen-file-reader` remains a release follow-up.
+
+Next session:
+- Add a checked-in two-k-mer BB=16 fixture if permanent Core-distance browser
+  regression coverage is desired.
+
+Blockers:
+- None for this implementation phase.
