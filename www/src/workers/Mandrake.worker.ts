@@ -15,7 +15,7 @@ interface Settings {
 interface StartMessage {
   type: "start";
   source: "alignment" | "accessory";
-  bytes: ArrayBuffer;
+  file: File;
   settings: Settings;
 }
 
@@ -92,11 +92,10 @@ async function handle(message: WorkerMessage): Promise<void> {
 
   if (message.type === "start") {
     const { MandrakeOperation } = await loadWasm();
-    const bytes = new Uint8Array(message.bytes);
     const settings = message.settings;
     operation = message.source === "alignment"
-      ? MandrakeOperation.fromAlignment(
-          bytes,
+      ? MandrakeOperation.fromAlignmentFile(
+          message.file,
           settings.mode,
           settings.value,
           settings.perplexity,
@@ -105,8 +104,8 @@ async function handle(message: WorkerMessage): Promise<void> {
           settings.learningRate,
           settings.initialExaggeration,
         )
-      : MandrakeOperation.fromAccessory(
-          bytes,
+      : MandrakeOperation.fromAccessoryFile(
+          message.file,
           settings.mode,
           settings.value,
           settings.perplexity,

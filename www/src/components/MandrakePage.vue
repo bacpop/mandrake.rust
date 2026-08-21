@@ -33,7 +33,7 @@
             ref="fileInput"
             class="hidden-file-input"
             type="file"
-            accept=".fa,.fasta,.fas,.fna,.fq,.fnq,.fastq,.rtab,.tsv"
+            accept=".fa,.fasta,.fas,.fna,.fq,.fnq,.fastq,.rtab,.tsv,.fa.gz,.fasta.gz,.fas.gz,.fna.gz,.fq.gz,.fnq.gz,.fastq.gz,.rtab.gz,.tsv.gz"
             :disabled="isRunning"
             @click.stop
             @change="onFileChange"
@@ -41,7 +41,7 @@
           <span class="drop-zone-icon" aria-hidden="true">↑</span>
           <strong v-if="isDragActive">Drop input here</strong>
           <strong v-else>Drop or click to upload an input</strong>
-          <span class="drop-zone-help">FASTA/FASTQ alignment or Roary Rtab/TSV</span>
+          <span class="drop-zone-help">FASTA/FASTQ or Roary Rtab/TSV, plain or gzip-compressed</span>
         </div>
         <p v-if="selectedFile && source" class="selected-file">
           <span>{{ selectedFile.name }}</span>
@@ -261,7 +261,11 @@ watch(mode, (nextMode) => {
 });
 
 function detectSource(filename: string): InputSource | null {
-  const suffix = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  const lowerFilename = filename.toLowerCase();
+  const sourceFilename = lowerFilename.endsWith(".gz")
+    ? lowerFilename.slice(0, -3)
+    : lowerFilename;
+  const suffix = sourceFilename.slice(sourceFilename.lastIndexOf("."));
   if ([".fa", ".fasta", ".fas", ".fna", ".fq", ".fnq", ".fastq"].includes(suffix)) {
     return "alignment";
   }
@@ -287,7 +291,7 @@ function chooseFile(file: File | undefined): void {
   inputError.value = "";
   labelError.value = "";
   if (!detectedSource) {
-    inputError.value = "Unsupported input suffix. Use FASTA/FASTQ (.fa, .fasta, .fas, .fna, .fq, .fnq, .fastq) or Rtab/TSV (.rtab, .tsv).";
+    inputError.value = "Unsupported input suffix. Use FASTA/FASTQ (.fa, .fasta, .fas, .fna, .fq, .fnq, .fastq) or Rtab/TSV (.rtab, .tsv), optionally followed by .gz.";
     return;
   }
   selectedFile.value = file;
@@ -398,8 +402,7 @@ async function runEmbedding(): Promise<void> {
     labelContents.value = selectedLabelsFile.value
       ? await selectedLabelsFile.value.text()
       : null;
-    const bytes = new Uint8Array(await selectedFile.value.arrayBuffer());
-    result.value = await runner.run(source.value, bytes, settings(), handleUpdate);
+    result.value = await runner.run(source.value, selectedFile.value, settings(), handleUpdate);
     sampleNames.value = result.value.names;
     liveEmbedding.value = result.value.embedding;
   } catch (error) {

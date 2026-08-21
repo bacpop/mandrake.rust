@@ -87,47 +87,39 @@ Expose:
 
 ## Objective
 
-Implement the next browser interface phase: cooperative distance progress,
-live intermediate embedding updates, optional exact-match user labels, an
-interactive Plotly WebGL plot, and one-million-update defaults.
+Implement browser gzip input support for alignment and accessory-table files,
+using Sparrowhawk's worker-side `File` reader and magic-byte-detected
+`MultiGzDecoder` so parsing proceeds on the fly.
 
 ### Checklist
 
-- [x] Read the web-tool skill and inspect the local Sparrowhawk reference
-- [x] Decide first-pass scope versus deferred browser features
-- [x] Add a wasm-bindgen handle around portable distance loading and `EmbeddingOperation`
-- [x] Add the Vue package, Sparrowhawk-style app shell, and Mandrake page
-- [x] Add a queued Web Worker/driver, final SVG plot, progress, and downloads
-- [x] Document the web tool and first-pass limitations
-- [x] Run the headless/native/wasm checks and the available web build checks
-- [x] Record this phase's scope and decisions before source edits
-- [x] Add cooperative wasm distance-row construction and phase progress
-- [x] Add live latest-state embedding messages from the worker
-- [x] Add named TSV labels and deterministic categorical colouring
-- [x] Replace the fixed SVG with an interactive Plotly WebGL plot
-- [x] Change library and web defaults/step to 1,000,000 updates
-- [x] Update web documentation and generated wasm TypeScript declarations
-- [x] Run Rust, wasm, web-build, and available Playwright checks
-- [x] Update plan status, design notes, session log, and deferred next task
+- [x] Record the gzip-only scope and Sparrowhawk reader/licensing decision
+- [x] Add wasm streaming file-reader and gzip parser boundary
+- [x] Route selected browser `File` objects through the worker
+- [x] Extend browser suffix detection and upload documentation
+- [x] Run native, wasm, web-build, and gzip-fixture Playwright checks
+- [x] Update plan status, design notes, session log, and next task
 
 ### Current Status
 
 Working on:
 
-The browser interface phase is complete. The cooperative distance protocol,
-live Plotly view, named labels, and one-million-update defaults are implemented;
-sketch inputs, HDBSCAN, and deterministic coordinate comparison remain deferred.
+The gzip browser-input phase is complete. Raw and gzip-compressed alignment
+and accessory uploads are read in the worker through the Sparrowhawk-style
+streaming boundary.
 
 Last verified:
 
-2026-08-20: native tests, Clippy, formatting, feature-free wasm compilation,
-the production Vue build, direct Node wasm execution, and elevated Playwright
-browser runs all passed. The real-size untracked Rtab completed in both Node
-wasm and the browser, producing 1,837 samples and 3,674 coordinates.
+2026-08-21: native tests, native and wasm Clippy, formatting, feature-free wasm
+compilation, the production Vue build, direct byte-based wasm execution, and
+Playwright browser runs passed. Both replacement `.Rtab.gz` and `.fas.gz`
+fixtures completed in Chromium, as did the existing raw-input smoke.
 
 Blockers:
 
-None.
+No implementation blockers. The `wasm-bindgen-file-reader` dependency is
+GPL-3.0; any project licensing or distribution decision is explicitly deferred
+and must be recorded before release.
 
 ---
 
@@ -178,6 +170,21 @@ None.
   remain unchanged.
 - This phase does not add `.skd`/`.skm` loading, sketch generation, HDBSCAN, or
   deterministic coordinate comparison; those remain the following task.
+
+## Browser gzip input phase (completed)
+
+- Scope is gzip only, for both alignment/FASTQ and Roary-style Rtab/TSV input.
+- Follow Sparrowhawk's approach: pass the selected `web_sys::File` through the
+  worker, use `wasm-bindgen-file-reader` for fixed-size synchronous `Read`
+  slices, inspect gzip magic bytes, and chain the prefix into
+  `flate2::read::MultiGzDecoder` before the existing parsers.
+- Keep the byte-based wasm constructors for existing Node/raw-byte callers and
+  share the resulting operation construction with the new `File` constructors.
+- Add the dependency as Sparrowhawk does and record its GPL-3.0 licensing as a
+  separate follow-up; do not change the repository licence in this phase.
+- `needletail` requires `Send` for its parser trait, so the file-reader enum has
+  a wasm-only `Send` implementation guarded by the single-worker wasm invariant;
+  no browser file object is handed to another thread.
 
 ## Python plotting CLI
 
@@ -566,8 +573,6 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-- Add support for gz/bz2 files. Check the Sparrowhawk FASTA reader for
-  how to achieve this.
 - Add browser support for existing `.skd`/`.skm` inputs and sketch generation.
 - Add HDBSCAN labelling in a wasm-compatible boundary and a deterministic Node
   oracle/browser verification harness.
@@ -694,7 +699,7 @@ Completed:
 Verification:
 - `rustup target list --installed` includes `wasm32-unknown-unknown`.
 - `cargo check --target wasm32-unknown-unknown --offline` currently fails in
-  native `lzma-sys`/`bzip2-sys` dependencies; implementation of the planned
+  native compression dependencies; implementation of the planned
   feature boundary is the next step.
 
 Next session:
@@ -1032,3 +1037,37 @@ Next session:
 Blockers:
 - None. Plotly bundle-size and npm audit warnings are recorded for later
   dependency/performance work.
+
+## 2026-08-21 (browser gzip input phase)
+
+Completed:
+- Added wasm-only `web_sys::File` constructors for alignment and accessory
+  inputs, sharing the existing byte-constructor operation path.
+- Added Sparrowhawk-compatible fixed-size file reads, gzip magic detection, and
+  `flate2::MultiGzDecoder` streaming into the existing parsers. The worker now
+  receives the selected `File` directly, so the page does not materialise an
+  input byte buffer before parsing.
+- Extended browser suffix detection, picker metadata, README documentation,
+  and the generated TypeScript boundary for `.gz` inputs.
+- Recorded the wasm-only `Send` invariant required by needletail and the
+  GPL-3.0 licensing follow-up for `wasm-bindgen-file-reader`.
+
+Verification:
+- `cargo test --all-targets --offline`: 30 tests passed.
+- Native and wasm Clippy with `-D warnings`, formatting, feature-free
+  `wasm32-unknown-unknown` compilation, `git diff --check`, and the production
+  Vue build passed. The build retains existing wasm/vendor bundle-size and npm
+  audit warnings.
+- Elevated Playwright Chromium smoke completed the replacement
+  `tests/fixtures/gene_presence_absence.Rtab.gz` and
+  `tests/fixtures/sub5k_hiv_refs_prrt_trim.fas.gz` uploads, and the existing
+  raw-input smoke still passed with two Plotly traces, 10 px minimum text, and
+  changed zoom range.
+
+Next session:
+- Add browser support for existing `.skd`/`.skm` inputs or sketch generation,
+  then add HDBSCAN labelling and the deterministic Node/browser oracle harness.
+
+Blockers:
+- No implementation blockers. Resolve the GPL-3.0 dependency's project
+  licensing/distribution treatment before release.

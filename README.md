@@ -30,14 +30,16 @@ The HDBSCAN mode also writes `<prefix>.embedding_hdbscan_clusters.csv`.
 
 The first browser interface lives in `www/` and follows the worker-driven Vue
 layout used by [Sparrowhawk](https://github.com/bacpop/sparrowhawk). It accepts
-plain FASTA/FASTQ alignments or Roary-style accessory tables, runs the
-feature-free Rust wasm core locally, plots the final embedding, and downloads
-the embedding and names files. The page accepts one input by click or
-drag-and-drop and detects alignment (`.fa`, `.fasta`, `.fq`, `.fastq`, and
-related FASTA/FASTQ suffixes) versus accessory (`.rtab`/`.tsv`) from the file
-name. Distance construction and optimization each have their own progress
-bar; the Plotly WebGL view updates with the latest embedding and supports
-hover, zoom, and pan. An optional labels file uses the same unheadered
+plain or gzip-compressed FASTA/FASTQ alignments and Roary-style accessory
+tables, runs the feature-free Rust wasm core locally, plots the final
+embedding, and downloads the embedding and names files. The page accepts one
+input by click or drag-and-drop and detects alignment (`.fa`, `.fasta`, `.fq`,
+`.fastq`, and related FASTA/FASTQ suffixes) versus accessory (`.rtab`/`.tsv`),
+with an optional `.gz` suffix, from the file name. Gzip data is read and
+decompressed inside the worker as the parser consumes it. Distance
+construction and optimization each have their own progress bar; the Plotly
+WebGL view updates with the latest embedding and supports hover, zoom, and
+pan. An optional labels file uses the same unheadered
 `sample-name<TAB>label` format as the Python plotting CLI and must cover every
 sample exactly once.
 

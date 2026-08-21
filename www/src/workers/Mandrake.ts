@@ -85,7 +85,7 @@ export class MandrakeRunner {
 
   run(
     source: "alignment" | "accessory",
-    bytes: Uint8Array,
+    file: File,
     settings: MandrakeSettings,
     onUpdate: UpdateHandler,
   ): Promise<MandrakeResult> {
@@ -105,14 +105,7 @@ export class MandrakeRunner {
       this.fail(new Error(event.message || "Mandrake worker failed"));
     };
 
-    const transferable = bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength,
-    );
-    worker.postMessage(
-      { type: "start", source, bytes: transferable, settings },
-      [transferable],
-    );
+    worker.postMessage({ type: "start", source, file, settings });
     return result;
   }
 

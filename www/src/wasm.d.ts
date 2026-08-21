@@ -23,8 +23,28 @@ declare module "@/pkg/index" {
       learningRate: number,
       initialExaggeration: boolean,
     ): MandrakeOperation;
+    static fromAlignmentFile(
+      file: File,
+      mode: string,
+      value: number,
+      perplexity: number,
+      maxUpdates: number,
+      repulsionSamples: number,
+      learningRate: number,
+      initialExaggeration: boolean,
+    ): MandrakeOperation;
     static fromAccessory(
       bytes: Uint8Array,
+      mode: string,
+      value: number,
+      perplexity: number,
+      maxUpdates: number,
+      repulsionSamples: number,
+      learningRate: number,
+      initialExaggeration: boolean,
+    ): MandrakeOperation;
+    static fromAccessoryFile(
+      file: File,
       mode: string,
       value: number,
       perplexity: number,
