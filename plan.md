@@ -87,10 +87,10 @@ Expose:
 
 ## Objective
 
-Add browser support for paired, current-format sketchlib `.skm`/`.skd` inputs.
-The drop zone must accept both files, expose Core or Jaccard distances (with a
-stored-k-mer selector for Jaccard), and run the new-format `BB=16` sketchlib
-distance path through the existing wasm embedding workflow.
+Make the root CI and release installation reproducible after the sketchlib
+dependency addition. Cargo must resolve the published `sketchlib` package from
+the checked-in lockfile, and the release workflow must install and package the
+`mandrake` binary exposed by this crate.
 
 ### Checklist
 
@@ -106,32 +106,38 @@ distance path through the existing wasm embedding workflow.
 - [x] Verify native, wasm, Node, and Chromium sketch paths
 - [x] Move the sketchlib gitlink to the merged upstream `sparrowhawk-dev`
   commit and rerun the affected verification
+- [x] Check in the root Cargo lockfile with the resolved sketchlib package
+- [x] Make root CI and release installs use the locked dependency graph
+- [x] Update release artifact names and binary paths for Mandrake
+- [x] Verify clean-checkout installation and relevant Rust workflows locally
 - [x] Update plan status, design notes, session log, and next task
 
 ### Current Status
 
 Completed:
 
-The Playwright and HDBSCAN phases are complete. This phase adds paired sketch
-database uploads using the remote `sparrowhawk-dev` sketchlib implementation;
-only new-format 16-bit-bin databases are supported.
-
-The sketchlib compatibility changes are now pinned through the merged upstream
-`sparrowhawk-dev` commit. The submodule is clean and no local compatibility
-patch is required.
+The browser and upstream sketchlib phases are complete. The current repair is
+limited to Cargo dependency reproducibility and the stale release packaging
+workflow; application and sketch-distance behavior are unchanged. The root
+lockfile is now present for inclusion in the repository, all Cargo workflows
+check out the submodule before using it, and release artifacts are named for
+Mandrake.
 
 Last verified:
 
 2026-08-21: the native Mandrake and complete submodule test suites, host and
 feature-gated wasm checks, both Clippy checks, the Node sketch oracle,
 production Vue build, and all three focused Chromium tests passed against
-upstream merge commit `da9c69edc00931e0a1593e1f3de14630a5746825`.
+upstream merge commit `da9c69edc00931e0a1593e1f3de14630a5746825`. The locked
+native install, package verification, locked host/wasm checks, all-features
+Clippy, YAML parsing, and diff/format checks also pass.
 
 Blockers:
 
-No implementation blockers. The `wasm-bindgen-file-reader` GPL-3.0 licensing
-follow-up remains deferred. The one-k-mer Core-distance limitation and the
-absence of a checked-in multi-k-mer fixture remain documented phase limits.
+No implementation blockers. The sandbox cannot reach crates.io, so online
+registry resolution is verified through the local cache and locked offline
+checks; the clean archive test does not require network access. The existing
+`wasm-bindgen-file-reader` GPL-3.0 licensing follow-up remains deferred.
 
 ---
 
@@ -297,6 +303,23 @@ absence of a checked-in multi-k-mer fixture remain documented phase limits.
   Mandrake-side compatibility patch or branch-specific source overlay remains.
 - Reuse the existing native, wasm, Node, production-build, and Chromium checks
   to confirm that the upstream merge is behaviorally equivalent for Mandrake.
+
+## CI dependency resolution and release install repair (completed)
+
+- Check in the root `Cargo.lock` because this repository contains an installable
+  binary and the resolved `sketchlib 0.4.1` package must not depend on a live
+  registry index at every CI run.
+- Pass `--locked` to root build, test, and install commands so CI fails on an
+  intentional manifest/lockfile change rather than silently selecting a new
+  dependency graph.
+- Keep the native sketch dependency on published crates.io `sketchlib 0.4.1`;
+  the wasm-only submodule path remains feature-gated and is not part of the
+  native install graph.
+- Update the stale release artifact workflow to install the root `mandrake`
+  binary and use Mandrake artifact names. This changes packaging names only;
+  it does not change the executable or library API.
+- Declare the wasm path dependency's existing submodule version (`0.3.0`) so
+  `cargo package` and the release publish job can validate the manifest.
 
 ## Python plotting CLI
 
@@ -685,9 +708,9 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
-- No implementation phase remains. If continuing, add a checked-in two-k-mer
-  BB=16 fixture for a permanent Core-distance browser regression; the current
-  Node smoke still generates that fixture temporarily.
+- If continuing, add a checked-in two-k-mer BB=16 fixture for a permanent
+  Core-distance browser regression; the current Node smoke still generates
+  that fixture temporarily.
 
 ---
 
@@ -1390,3 +1413,37 @@ Next session:
 
 Blockers:
 - None for this implementation phase.
+
+## 2026-08-21 (CI dependency resolution and release install repair)
+
+Completed:
+- Reproduced the reported Cargo error with a clean tracked archive plus the
+  root lockfile but without the `sketchlib.rust` submodule; Cargo searched that
+  missing path for package `sketchlib`.
+- Added the generated root `Cargo.lock` and made every root Cargo workflow
+  check out recursive submodules before running locked builds, tests, Clippy,
+  coverage, or release commands.
+- Added the wasm submodule dependency's `0.3.0` version requirement so Cargo
+  can package the manifest, and corrected the stale release workflow to install
+  and archive the `mandrake` binary.
+
+Verification:
+- The clean archive install fails without the submodule with the original
+  `no matching package named sketchlib found` message and succeeds with the
+  submodule restored using `cargo install --path . --locked --offline`.
+- `cargo test --locked --offline` passed all 32 tests.
+- Locked host and feature-free/wasm-sketchlib checks passed; all-features
+  Clippy with `-D warnings`, `cargo package --locked --offline`, YAML parsing,
+  formatting, and `git diff --check` passed.
+
+Limitations and deviations:
+- The CI registry was not reachable from this environment, so install and
+  package verification used the local Cargo cache with offline mode.
+- No application source or sketch-distance behavior changed.
+
+Next session:
+- If desired, add a checked-in two-k-mer BB=16 fixture for permanent Core
+  browser regression coverage.
+
+Blockers:
+- None for this repair.

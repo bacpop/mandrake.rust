@@ -25,6 +25,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -36,16 +38,16 @@ jobs:
       - name: Build and package binary
         shell: bash
         run: |
-          cargo install --path .
-          cp $HOME/.cargo/bin/sketchlib .
-          tar czvf sketchlib-${{ github.ref_name }}-${{ matrix.config.os }}-${{ matrix.config.toolchain }}.tar.gz sketchlib LICENSE NOTICE README.md
+          cargo install --path . --locked --bin mandrake
+          cp $HOME/.cargo/bin/mandrake .
+          tar czvf mandrake-${{ github.ref_name }}-${{ matrix.config.os }}-${{ matrix.config.toolchain }}.tar.gz mandrake LICENSE NOTICE README.md
 
       - name: Upload package
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: sketchlib-${{ github.ref_name }}-${{ matrix.config.os }}-${{ matrix.config.toolchain }}
-          path: sketchlib-${{ github.ref_name }}-${{ matrix.config.os }}-${{ matrix.config.toolchain }}.tar.gz
+          name: mandrake-${{ github.ref_name }}-${{ matrix.config.os }}-${{ matrix.config.toolchain }}
+          path: mandrake-${{ github.ref_name }}-${{ matrix.config.os }}-${{ matrix.config.toolchain }}.tar.gz
 
   create-release:
     runs-on: ubuntu-latest
@@ -62,8 +64,8 @@ jobs:
       - name: Organise files
         shell: bash
         run: |
-          cp build/sketchlib-${{ github.ref_name }}-macOS-latest-stable/sketchlib-${{ github.ref_name }}-macOS-latest-stable.tar.gz .
-          cp build/sketchlib-${{ github.ref_name }}-ubuntu-latest-stable/sketchlib-${{ github.ref_name }}-ubuntu-latest-stable.tar.gz .
+          cp build/mandrake-${{ github.ref_name }}-macOS-latest-stable/mandrake-${{ github.ref_name }}-macOS-latest-stable.tar.gz .
+          cp build/mandrake-${{ github.ref_name }}-ubuntu-latest-stable/mandrake-${{ github.ref_name }}-ubuntu-latest-stable.tar.gz .
 
       - name: Create release
         id: create_release
@@ -75,13 +77,15 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: true
           files: |
-            sketchlib-*.tar.gz
+            mandrake-*.tar.gz
 
   push_crate:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@master
         with:
             toolchain: stable
