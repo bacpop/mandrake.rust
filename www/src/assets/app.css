@@ -55,16 +55,11 @@ select:disabled {
 .brand-mark,
 .heading-icon,
 .empty-icon {
-  display: grid;
-  place-items: center;
+  display: block;
+  object-fit: contain;
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: #243b53;
-  color: #f9c74f;
-  font-family: Georgia, serif;
-  font-size: 25px;
-  font-weight: 700;
 }
 
 .brand-name {
@@ -151,7 +146,6 @@ select:disabled {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  font-size: 21px;
 }
 
 .help-copy {
@@ -553,7 +547,6 @@ select:disabled {
   width: 52px;
   height: 52px;
   margin-bottom: 16px;
-  font-size: 30px;
 }
 
 @media (max-width: 1050px) {

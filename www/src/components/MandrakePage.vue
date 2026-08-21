@@ -2,7 +2,7 @@
   <div class="page-layout">
     <section class="parameter-rail">
       <div class="page-heading">
-        <div class="heading-icon" aria-hidden="true">M</div>
+        <img class="heading-icon" :src="mandrakeLogo" alt="" aria-hidden="true">
         <div>
           <h1>Mandrake</h1>
           <p>Stochastic cluster embedding</p>
@@ -33,7 +33,7 @@
             ref="fileInput"
             class="hidden-file-input"
             type="file"
-            accept=".fa,.fasta,.fas,.fna,.fq,.fnq,.fastq,.rtab,.tsv,.fa.gz,.fasta.gz,.fas.gz,.fna.gz,.fq.gz,.fnq.gz,.fastq.gz,.rtab.gz,.tsv.gz"
+            accept=".fa,.fasta,.fas,.fna,.fq,.fnq,.fastq,.rtab,.tsv,.fa.gz,.fasta.gz,.fas.gz,.fna.gz,.fq.gz,.fnq.gz,.fastq.gz,.rtab.gz,.tsv.gz,.gz"
             :disabled="isRunning"
             @click.stop
             @change="onFileChange"
@@ -194,7 +194,7 @@
       </div>
 
       <div v-else-if="!isRunning && !errorMessage" class="empty-state">
-        <div class="empty-icon" aria-hidden="true">M</div>
+        <img class="empty-icon" :src="mandrakeLogo" alt="" aria-hidden="true">
         <h2>Your embedding will appear here</h2>
         <p>Choose an input file and parameters, then run Mandrake.</p>
       </div>
@@ -204,6 +204,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import mandrakeLogo from "../assets/mandrake_logo.png";
 import EmbeddingPlot from "./EmbeddingPlot.vue";
 import ParameterTooltip from "./ParameterTooltip.vue";
 import {

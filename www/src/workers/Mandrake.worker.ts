@@ -49,6 +49,7 @@ let queue = Promise.resolve();
 let wasmPromise: Promise<MandrakeWasm> | null = null;
 let nextFrameUpdate = 0;
 let frameInterval = 1;
+const MAX_FRAME_INTERVAL = 20_000;
 
 function loadWasm(): Promise<MandrakeWasm> {
   if (!wasmPromise) {
@@ -137,7 +138,7 @@ async function handle(message: WorkerMessage): Promise<void> {
   if (message.type === "begin-embedding") {
     operation.beginEmbedding();
     const progress = operation.advance(0);
-    frameInterval = Math.max(1, Math.ceil(progress.maximum / 20));
+    frameInterval = Math.max(1, Math.min(MAX_FRAME_INTERVAL, Math.ceil(progress.maximum / 20)));
     nextFrameUpdate = frameInterval;
     self.postMessage({
       type: "embedding-progress",

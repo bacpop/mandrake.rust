@@ -87,39 +87,41 @@ Expose:
 
 ## Objective
 
-Implement browser gzip input support for alignment and accessory-table files,
-using Sparrowhawk's worker-side `File` reader and magic-byte-detected
-`MultiGzDecoder` so parsing proceeds on the fly.
+Polish the browser input and visual experience: make compressed-file selection
+work in Firefox, increase live embedding frame frequency for large update
+budgets, and replace the three decorative `M` marks with the supplied
+`mandrake_logo.png` asset.
 
 ### Checklist
 
-- [x] Record the gzip-only scope and Sparrowhawk reader/licensing decision
-- [x] Add wasm streaming file-reader and gzip parser boundary
-- [x] Route selected browser `File` objects through the worker
-- [x] Extend browser suffix detection and upload documentation
-- [x] Run native, wasm, web-build, and gzip-fixture Playwright checks
+- [x] Add a Firefox-compatible generic `.gz` picker token while retaining
+      suffix validation
+- [x] Cap large-run animation frame intervals at 20,000 updates
+- [x] Use `mandrake_logo.png` for all three decorative application marks
+- [x] Run production build, Chromium smoke, large-run live-frame, and layout
+      checks; record Firefox picker verification as a manual check
 - [x] Update plan status, design notes, session log, and next task
 
 ### Current Status
 
-Working on:
+Completed:
 
-The gzip browser-input phase is complete. Raw and gzip-compressed alignment
-and accessory uploads are read in the worker through the Sparrowhawk-style
-streaming boundary.
+The browser visual/input refinement phase is complete. The picker accepts the
+Firefox-compatible generic gzip suffix, large runs emit more frequent live
+frames, and all three decorative marks use the supplied mascot asset.
 
 Last verified:
 
-2026-08-21: native tests, native and wasm Clippy, formatting, feature-free wasm
-compilation, the production Vue build, direct byte-based wasm execution, and
-Playwright browser runs passed. Both replacement `.Rtab.gz` and `.fas.gz`
-fixtures completed in Chromium, as did the existing raw-input smoke.
+2026-08-21: the production Vue build, existing Chromium UI and gzip-fixture
+smokes, a 1,000,000-update live-frame run, and desktop/narrow layout checks
+passed. The live run produced 47 intermediate Plotly updates.
 
 Blockers:
 
-No implementation blockers. The `wasm-bindgen-file-reader` dependency is
-GPL-3.0; any project licensing or distribution decision is explicitly deferred
-and must be recorded before release.
+No implementation blockers. Firefox is not installed in the local Playwright
+cache, so selecting `.fas.gz` and `.Rtab.gz` through the picker remains a
+manual Firefox verification. The `wasm-bindgen-file-reader` GPL-3.0 licensing
+follow-up remains deferred from the gzip phase.
 
 ---
 
@@ -185,6 +187,24 @@ and must be recorded before release.
 - `needletail` requires `Send` for its parser trait, so the file-reader enum has
   a wasm-only `Send` implementation guarded by the single-worker wasm invariant;
   no browser file object is handed to another thread.
+
+## Browser visual/input refinement phase (completed)
+
+- Add a generic `.gz` token to the primary file input's `accept` list so Firefox
+  filters by the final compressed suffix; retain case-insensitive underlying
+  suffix detection and parser validation rather than accepting arbitrary gzip
+  content.
+- Keep the existing approximately 20-frame schedule for smaller embedding
+  budgets, but cap its interval at 20,000 updates with
+  `min(ceil(maximum / 20), 20_000)` so large runs do not look choppy.
+- Import the supplied `mandrake_logo.png` through the Vue asset pipeline and
+  use it for the sidebar brand mark, page heading mark, and empty-state mark.
+  The images remain decorative because the adjacent text carries the identity.
+- Do not add a permanent end-to-end harness in this focused pass. Verification
+  uses the existing Chromium smokes plus a temporary visual smoke for asset
+  loading, the generic picker token, responsive layout, and live-frame updates;
+  Firefox picker selection is manual because no Playwright Firefox binary is
+  installed locally.
 
 ## Python plotting CLI
 
@@ -573,9 +593,9 @@ Port implementation from `wtsne.hpp`.
 
 # Next Task
 
+- Add HDBSCAN labelling (https://crates.io/crates/hdbscan) in a wasm-compatible
+  boundary and a deterministic Node oracle/browser verification harness.
 - Add browser support for existing `.skd`/`.skm` inputs and sketch generation.
-- Add HDBSCAN labelling in a wasm-compatible boundary and a deterministic Node
-  oracle/browser verification harness.
 
 ---
 
@@ -1071,3 +1091,36 @@ Next session:
 Blockers:
 - No implementation blockers. Resolve the GPL-3.0 dependency's project
   licensing/distribution treatment before release.
+
+## 2026-08-21 (browser visual/input refinement)
+
+Completed:
+- Added a generic `.gz` token to the browser input picker while preserving the
+  existing case-insensitive FASTA/FASTQ and Rtab/TSV suffix validation.
+- Capped the worker's live-frame interval at 20,000 updates while retaining the
+  existing approximately 20-frame cadence for smaller runs.
+- Added the supplied `www/src/assets/mandrake_logo.png` and replaced the
+  sidebar, page-heading, and empty-state decorative `M` marks with it.
+
+Verification:
+- `cd www && npm run build` passed. Existing wasm/vendor bundle-size and npm
+  audit warnings remain unchanged.
+- Existing Chromium UI and gzip-fixture smokes passed. A focused elevated
+  Chromium smoke loaded all three logo images, confirmed the generic `.gz`
+  token, found no desktop or narrow-layout overflow, and observed 47 live
+  Plotly updates during a 1,000,000-update run.
+- `git diff --check` passed.
+
+Limitations:
+- Firefox picker selection was not automated because the Playwright Firefox
+  binary is not installed; manually select both `.fas.gz` and `.Rtab.gz` in
+  Firefox to complete that browser-specific check.
+- No permanent browser test harness was added in this focused pass.
+
+Next session:
+- Add HDBSCAN labelling and the deterministic Node/browser verification
+  harness, then add existing `.skd`/`.skm` loading or sketch generation.
+
+Blockers:
+- None. The gzip reader's GPL-3.0 licensing/distribution decision remains a
+  release follow-up.

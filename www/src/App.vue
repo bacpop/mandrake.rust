@@ -1,7 +1,7 @@
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand-mark" aria-hidden="true">M</div>
+      <img class="brand-mark" :src="mandrakeLogo" alt="" aria-hidden="true">
       <div>
         <p class="brand-name">Mandrake</p>
         <p class="brand-caption">stochastic cluster embedding</p>
@@ -20,4 +20,5 @@
 
 <script setup lang="ts">
 import MandrakePage from "./components/MandrakePage.vue";
+import mandrakeLogo from "./assets/mandrake_logo.png";
 </script>
