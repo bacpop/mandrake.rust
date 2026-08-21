@@ -8,6 +8,7 @@ export interface MandrakeSettings {
   repulsionSamples: number;
   learningRate: number;
   initialExaggeration: boolean;
+  hdbscan: boolean;
 }
 
 export interface MandrakeProgress {
@@ -29,11 +30,14 @@ export interface MandrakeResult {
   completed: number;
   maximum: number;
   eq: number;
+  hdbscanLabels: Int32Array | null;
+  hdbscanError: string | null;
 }
 
 export type MandrakeUpdate =
   | { phase: "distance"; progress: MandrakeDistanceProgress; names?: string[] }
   | { phase: "embedding"; progress: MandrakeProgress }
+  | { phase: "clustering" }
   | { phase: "frame"; embedding: Float64Array; completed: number; maximum: number };
 
 type UpdateHandler = (update: MandrakeUpdate) => void;
@@ -61,6 +65,12 @@ interface CompleteMessage {
   completed: number;
   maximum: number;
   eq: number;
+  clusters?: Int32Array;
+  hdbscanError?: string;
+}
+
+interface ClusteringMessage {
+  type: "clustering";
 }
 
 interface ErrorMessage {
@@ -71,6 +81,7 @@ interface ErrorMessage {
 type WorkerMessage =
   | DistanceProgressMessage
   | EmbeddingProgressMessage
+  | ClusteringMessage
   | FrameMessage
   | CompleteMessage
   | ErrorMessage;
@@ -173,6 +184,11 @@ export class MandrakeRunner {
       return;
     }
 
+    if (message.type === "clustering") {
+      this.updateHandler?.({ phase: "clustering" });
+      return;
+    }
+
     this.updateHandler?.({
       phase: "embedding",
       progress: {
@@ -188,6 +204,8 @@ export class MandrakeRunner {
       completed: message.completed,
       maximum: message.maximum,
       eq: message.eq,
+      hdbscanLabels: message.clusters ?? null,
+      hdbscanError: message.hdbscanError ?? null,
     };
     this.resolve?.(result);
     this.cleanupWorker();

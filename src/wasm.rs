@@ -23,6 +23,13 @@ fn js_error(error: impl Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
+/// Cluster a completed row-major two-dimensional embedding with HDBSCAN.
+#[wasm_bindgen(js_name = clusterEmbedding)]
+pub fn cluster_embedding(embedding: &[f64]) -> Result<Vec<i32>, JsValue> {
+    console_error_panic_hook::set_once();
+    crate::hdbscan::cluster_embedding(embedding).map_err(js_error)
+}
+
 fn sparsification(mode: &str, value: f64) -> Result<Sparsification, JsValue> {
     match mode {
         "knn" => {

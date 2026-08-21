@@ -87,41 +87,41 @@ Expose:
 
 ## Objective
 
-Polish the browser input and visual experience: make compressed-file selection
-work in Firefox, increase live embedding frame frequency for large update
-budgets, and replace the three decorative `M` marks with the supplied
-`mandrake_logo.png` asset.
+Add a reproducible Playwright test harness for the browser tool. The harness
+must start the Vue dev server itself, use repository-relative tracked fixtures,
+exercise the gzip accessory path and HDBSCAN result controls, and report page or
+console errors without waiting for the slow compressed alignment fixture.
 
 ### Checklist
 
-- [x] Add a Firefox-compatible generic `.gz` picker token while retaining
-      suffix validation
-- [x] Cap large-run animation frame intervals at 20,000 updates
-- [x] Use `mandrake_logo.png` for all three decorative application marks
-- [x] Run production build, Chromium smoke, large-run live-frame, and layout
-      checks; record Firefox picker verification as a manual check
+- [x] Add the pinned serial HDBSCAN dependency and pure Rust clustering helper
+- [x] Export final-embedding clustering through the feature-free wasm boundary
+- [x] Add the browser option, final-label switch, cluster count, and noise styling
+- [x] Add Python-compatible cluster CSV generation and download
+- [x] Add native, Node-wasm, and Chromium verification for labels and downloads
+- [x] Add the local Playwright dependency, config, and reproducible browser tests
 - [x] Update plan status, design notes, session log, and next task
 
 ### Current Status
 
 Completed:
 
-The browser visual/input refinement phase is complete. The picker accepts the
-Firefox-compatible generic gzip suffix, large runs emit more frequent live
-frames, and all three decorative marks use the supplied mascot asset.
+The HDBSCAN final-embedding phase is complete. This phase adds a committed
+Playwright harness around the existing browser workflows; it deliberately tests
+the tracked `.Rtab.gz` fixture but does not wait for the slow `.fas.gz` fixture.
 
 Last verified:
 
-2026-08-21: the production Vue build, existing Chromium UI and gzip-fixture
-smokes, a 1,000,000-update live-frame run, and desktop/narrow layout checks
-passed. The live run produced 47 intermediate Plotly updates.
+2026-08-21: the previous phase's native tests and Clippy, feature-free wasm
+checks, production Vue build, deterministic Node wasm oracle, compressed real
+fixture, and temporary Chromium HDBSCAN smoke passed; the committed Playwright
+suite now passes both focused Chromium tests.
 
 Blockers:
 
-No implementation blockers. Firefox is not installed in the local Playwright
-cache, so selecting `.fas.gz` and `.Rtab.gz` through the picker remains a
-manual Firefox verification. The `wasm-bindgen-file-reader` GPL-3.0 licensing
-follow-up remains deferred from the gzip phase.
+No implementation blockers. The `wasm-bindgen-file-reader` GPL-3.0 licensing
+follow-up remains deferred from the gzip phase. Browser binaries remain an
+external Playwright cache installed by `npm run playwright:install`.
 
 ---
 
@@ -205,6 +205,53 @@ follow-up remains deferred from the gzip phase.
   loading, the generic picker token, responsive layout, and live-frame updates;
   Firefox picker selection is manual because no Playwright Firefox binary is
   installed locally.
+
+## Browser HDBSCAN labelling phase
+
+- Pin the pure-Rust `hdbscan` crate at `0.12.0` with its serial feature so the
+  same implementation is available to native tests and the feature-free wasm
+  build. Use a private helper over row-major two-dimensional embeddings and a
+  wasm `clusterEmbedding` export returning signed labels, where `-1` is noise.
+- Match the existing Python preset: centre each dimension, divide by half its
+  range, use Euclidean distance, `min_cluster_size=2`, `min_samples=2`,
+  `epsilon=0.02`, automatic nearest-neighbour selection, and allow a single
+  cluster. Reject fewer than two samples, malformed/non-finite coordinates, or
+  zero-range dimensions with a recoverable error.
+- Add a checkbox to request clustering after final optimisation. The worker
+  posts a labelling state, invokes clustering only after the final embedding,
+  and preserves the completed embedding if labelling fails.
+- Preserve manual labels during live updates. If both sources succeed, expose
+  an accessible colour-scheme toggle and default it to manual labels; if only
+  HDBSCAN succeeds, select clusters automatically. Plot cluster labels as
+  `Cluster N` and render `Noise` in a separate subdued black trace.
+- Report the number of distinct non-noise cluster IDs in the result summary,
+  explicitly showing that zero clusters were found when every sample is noise.
+- Add a `Download clusters` action that writes
+  `<prefix>.embedding_hdbscan_clusters.csv` with the Python-compatible
+  `id,hdbscan_cluster__autocolour` header, one CSV-escaped row per sample in
+  embedding order. Do not expose the button when clustering was not requested
+  or failed.
+- Keep cluster IDs deterministic for the pinned Rust implementation, but do
+  not promise numeric parity with another HDBSCAN implementation. Validate the
+  native helper against a separated-cluster/noise fixture and compare the Node
+  wasm export to that native result.
+
+## Reproducible Playwright browser phase
+
+- Keep the test runner in `www/` with pinned `@playwright/test` 1.62.1, a
+  checked-in `playwright.config.ts`, and `www/e2e/mandrake.spec.ts`. The config starts
+  `npm run serve -- --port 8080 --host 127.0.0.1`, so tests do not depend on a
+  manually running server or an npx cache import.
+- Resolve the accessory fixture from the test file's path to the repository's
+  tracked `tests/fixtures/gene_presence_absence.Rtab.gz`; do not embed an
+  absolute developer path. The compressed alignment fixture is intentionally
+  excluded because its embedding runtime is too long for this smoke suite.
+- Use one tracked gzip completion test and one small in-memory accessory test
+  for HDBSCAN controls and CSV download. Both collect page errors and console
+  errors and fail after the relevant result state; the small test keeps UI
+  coverage fast without changing production defaults.
+- Playwright browser binaries remain outside the repository and are installed
+  explicitly with `npm run playwright:install` (Chromium only).
 
 ## Python plotting CLI
 
@@ -1118,9 +1165,100 @@ Limitations:
 - No permanent browser test harness was added in this focused pass.
 
 Next session:
-- Add HDBSCAN labelling and the deterministic Node/browser verification
-  harness, then add existing `.skd`/`.skm` loading or sketch generation.
+- Add browser support for existing `.skd`/`.skm` inputs or sketch generation.
 
 Blockers:
 - None. The gzip reader's GPL-3.0 licensing/distribution decision remains a
   release follow-up.
+
+## 2026-08-21 (browser HDBSCAN final-embedding phase)
+
+Completed:
+- Pinned `hdbscan = 0.12.0` with its serial-only feature and added a pure Rust
+  helper that validates, centres, half-range-scales, and clusters final 2D
+  embeddings with the fixed browser preset. Noise is returned as `-1`.
+- Added the feature-free wasm `clusterEmbedding` export and queued-worker
+  labelling step. Clustering runs only after optimisation, reports a distinct
+  progress state, transfers signed labels with the final embedding, and keeps
+  the embedding visible when labelling returns an error.
+- Added the HDBSCAN option, manual-versus-cluster colour switch, non-noise
+  cluster count (including an explicit zero-cluster message), cluster/noise
+  Plotly styling, warning state, and CSV download with the exact Python header
+  and CSV escaping. Added `scripts/hdbscan_oracle.mjs` for the deterministic
+  Node-target wasm fixture.
+- Updated the browser README with the option, output, and oracle invocation.
+
+Verification:
+- `cargo fmt --all -- --check`, `cargo test --all-targets --offline` (32
+  tests), native and feature-free wasm Clippy with `-D warnings`, and the
+  feature-free wasm check passed.
+- `cd www && npm run build` passed. Existing wasm/vendor bundle-size and npm
+  audit warnings remain unchanged.
+- `wasm-pack build --target nodejs --no-default-features --out-dir
+  /private/tmp/mandrake-wasm-node --dev` followed by
+  `node scripts/hdbscan_oracle.mjs /private/tmp/mandrake-wasm-node` passed with
+  the native 11-point fixture labels `[0,0,0,0,0,1,1,1,1,1,-1]`.
+- A real Node wasm run over `tests/fixtures/gene_presence_absence.Rtab.gz`
+  produced 1,837 labels for 3,674 coordinates and completed HDBSCAN labelling.
+- Elevated Playwright Chromium smoke passed the HDBSCAN option, final result
+  count (including the all-noise message), manual/HDBSCAN colour switch,
+  cluster/noise traces, and `hdbscan.embedding_hdbscan_clusters.csv` download
+  with six rows and the expected header; no page or console errors occurred.
+- `git diff --check` passed.
+
+Limitations and deviations:
+- The Rust crate is pinned for reproducible in-browser output, but cluster
+  numeric IDs are not promised to match Python's separate implementation.
+- Chromium verification used the existing installed CLI and a temporary smoke
+  script; the permanent deterministic oracle is Node-based. Firefox picker
+  coverage remains manual, as recorded in the preceding phase.
+
+Next session:
+- Add browser support for existing `.skd`/`.skm` inputs or sketch generation.
+
+Blockers:
+- No implementation blockers. Resolve the `wasm-bindgen-file-reader` GPL-3.0
+  licensing/distribution decision before release.
+
+## 2026-08-21 (reproducible Playwright browser harness)
+
+Completed:
+- Added pinned local `@playwright/test` 1.62.1, `test:e2e`, and
+  `playwright:install` npm
+  scripts, plus a checked-in `www/playwright.config.ts` that starts the Vue
+  server on localhost and selects Chromium with bounded timeouts and failure
+  artifacts.
+- Promoted browser coverage to `www/e2e/mandrake.spec.ts`. The suite resolves
+  `tests/fixtures/gene_presence_absence.Rtab.gz` from the repository path,
+  waits for a final Plotly embedding, checks page/console errors, and exercises
+  the HDBSCAN colour switch and cluster CSV download with a small in-memory
+  accessory fixture. No `.fas.gz` test was added.
+- Documented the install and `npm run test:e2e` commands in README.
+- Recorded the reproducible runner and fixture decisions in Design Notes and
+  kept the next task at browser `.skd`/`.skm` support or sketch generation.
+
+Verification:
+- `npm install` updated the local lockfile with Playwright 1.62.1.
+- `npm run playwright:install` downloaded the Chromium and headless-shell
+  binaries to Playwright's external cache.
+- `npm run test:e2e -- --list` listed both committed Chromium tests.
+- `npx tsc --noEmit --target es2022 --module commonjs --moduleResolution node
+  --esModuleInterop --skipLibCheck playwright.config.ts e2e/mandrake.spec.ts`
+  passed.
+- `npm run test:e2e` passed both tests in 34.2 seconds: the tracked gzip
+  accessory fixture completed in 24.3 seconds and the HDBSCAN/CSV smoke in
+  2.3 seconds.
+
+Limitations and deviations:
+- The slow compressed alignment fixture remains intentionally excluded, as
+  requested. Playwright browser binaries are not committed and must be
+  installed separately.
+- Existing npm audit warnings and wasm/vendor bundle-size warnings remain
+  unchanged.
+
+Next session:
+- Add browser support for existing `.skd`/`.skm` inputs or sketch generation.
+
+Blockers:
+- No implementation blockers. Resolve the `wasm-bindgen-file-reader` GPL-3.0
+  licensing/distribution decision before release.

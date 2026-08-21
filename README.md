@@ -42,6 +42,10 @@ WebGL view updates with the latest embedding and supports hover, zoom, and
 pan. An optional labels file uses the same unheadered
 `sample-name<TAB>label` format as the Python plotting CLI and must cover every
 sample exactly once.
+The `Run HDBSCAN after embedding` option applies a fixed, deterministic preset to
+the final two-dimensional embedding. The result reports the number of non-noise
+clusters, can switch between manual and HDBSCAN colours, renders noise separately,
+and offers a `<prefix>.embedding_hdbscan_clusters.csv` download.
 
 ```sh
 cd www
@@ -49,9 +53,25 @@ npm install
 npm run serve
 ```
 
+To run the committed Chromium browser checks, install the external Playwright
+binary once and let the test runner start the dev server:
+
+```sh
+npm run playwright:install
+npm run test:e2e
+```
+
 The browser build requires the Rust `wasm32-unknown-unknown` target and
-`wasm-pack`. Sketch databases, sketch generation, HDBSCAN labelling, and a
-deterministic browser coordinate oracle are planned for a later phase.
+`wasm-pack`. Sketch databases and sketch generation are planned for a later
+phase.
+
+The deterministic wasm HDBSCAN oracle can be run after building a Node-target
+package:
+
+```sh
+wasm-pack build --target nodejs --no-default-features --out-dir /tmp/mandrake-wasm-node
+node scripts/hdbscan_oracle.mjs /tmp/mandrake-wasm-node
+```
 
 ## Citation
 

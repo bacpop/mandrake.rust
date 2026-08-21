@@ -2,6 +2,8 @@
 
 pub mod api;
 pub mod distances;
+#[allow(dead_code)]
+mod hdbscan;
 mod progress;
 mod sce;
 #[cfg(target_family = "wasm")]

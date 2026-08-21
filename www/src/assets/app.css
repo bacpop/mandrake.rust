@@ -399,6 +399,41 @@ select:disabled {
   background: #f8fafc;
 }
 
+.colour-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 18px;
+  color: #52606d;
+  font-size: 12px;
+}
+
+.colour-switch-label {
+  margin-right: 2px;
+  font-weight: 500;
+}
+
+.colour-switch button {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  padding: 5px 9px;
+  color: #52606d;
+  font-size: 11px;
+}
+
+.colour-switch button:hover {
+  border-color: #829ab1;
+  background: #f8fafc;
+}
+
+.colour-switch button[aria-pressed="true"] {
+  border-color: #243b53;
+  background: #243b53;
+  color: #fff;
+}
+
 .sidebar-note {
   margin: 24px 0 0;
   color: #9aa5b1;
@@ -431,6 +466,12 @@ select:disabled {
   border-color: #f5b5b5;
   background: #fff5f5;
   color: #9b2c2c;
+}
+
+.message-warning {
+  border-color: #f2d49b;
+  background: #fffaf0;
+  color: #8a5a00;
 }
 
 .progress-card,

@@ -1,4 +1,6 @@
 declare module "@/pkg/index" {
+  export function clusterEmbedding(embedding: Float64Array): Int32Array;
+
   export class MandrakeProgress {
     readonly completed: number;
     readonly maximum: number;

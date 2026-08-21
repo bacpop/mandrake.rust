@@ -68,6 +68,12 @@
         </p>
         <p v-if="labelError" class="input-error" role="alert">{{ labelError }}</p>
 
+        <label class="check-row" for="hdbscan">
+          <input id="hdbscan" v-model="runHdbscan" type="checkbox" :disabled="isRunning">
+          <span>Run HDBSCAN after embedding</span>
+          <ParameterTooltip text="Cluster the final two-dimensional embedding with the fixed browser HDBSCAN preset." />
+        </label>
+
         <div class="section-rule" />
 
         <label class="control-label" for="sparsification">
@@ -174,21 +180,50 @@
         </p>
       </div>
 
+      <div v-if="clustering" id="hdbscan-progress" class="progress-card clustering-card" role="status">
+        <div class="progress-heading">
+          <span>HDBSCAN labelling</span>
+          <span>Working…</span>
+        </div>
+        <p class="progress-detail">Labelling the final embedding</p>
+      </div>
+
       <div v-if="liveEmbedding" class="result-card">
         <div class="result-header">
           <div>
-            <h2>{{ isRunning ? "Embedding in progress" : "Final embedding" }}</h2>
-            <p>{{ sampleNames.length.toLocaleString() }} samples · two dimensions</p>
+            <h2>{{ isRunning ? (clustering ? "Labelling clusters…" : "Embedding in progress") : "Final embedding" }}</h2>
+            <p>
+              {{ sampleNames.length.toLocaleString() }} samples · two dimensions
+              <span v-if="hdbscanLabels" id="hdbscan-cluster-summary"> · {{ hdbscanSummary }}</span>
+            </p>
           </div>
           <div v-if="result" class="download-row">
             <button class="secondary-button" @click="downloadEmbedding">Download embedding</button>
             <button class="secondary-button" @click="downloadNames">Download names</button>
+            <button v-if="hdbscanLabels" id="download-clusters" class="secondary-button" @click="downloadClusters">Download clusters</button>
           </div>
+        </div>
+        <div v-if="clusterError" id="hdbscan-error" class="message message-warning" role="status">
+          HDBSCAN could not label this embedding: {{ clusterError }}
+        </div>
+        <div v-if="hasBothLabels" class="colour-switch" role="group" aria-label="Plot colours">
+          <span class="colour-switch-label">Colour by</span>
+          <button
+            type="button"
+            :aria-pressed="colourMode === 'manual'"
+            @click="colourMode = 'manual'"
+          >Manual labels</button>
+          <button
+            type="button"
+            :aria-pressed="colourMode === 'clusters'"
+            @click="colourMode = 'clusters'"
+          >HDBSCAN clusters</button>
         </div>
         <EmbeddingPlot
           :embedding="liveEmbedding"
           :names="sampleNames"
-          :labels="labels ?? undefined"
+          :labels="activeLabels ?? undefined"
+          :noise-label="colourMode === 'clusters' ? 'Noise' : undefined"
           :run-key="runKey"
         />
       </div>
@@ -203,7 +238,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import mandrakeLogo from "../assets/mandrake_logo.png";
 import EmbeddingPlot from "./EmbeddingPlot.vue";
 import ParameterTooltip from "./ParameterTooltip.vue";
@@ -233,12 +268,17 @@ const maxUpdates = ref(1_000_000);
 const repulsionSamples = ref(5);
 const learningRate = ref(1);
 const initialExaggeration = ref(false);
+const runHdbscan = ref(false);
 const isRunning = ref(false);
 const errorMessage = ref("");
 const result = ref<MandrakeResult | null>(null);
 const liveEmbedding = ref<Float64Array | null>(null);
 const sampleNames = ref<string[]>([]);
 const labels = ref<string[] | null>(null);
+const hdbscanLabels = shallowRef<Int32Array | null>(null);
+const colourMode = ref<"manual" | "clusters">("manual");
+const clustering = ref(false);
+const clusterError = ref("");
 const labelContents = ref<string | null>(null);
 const distanceProgress = ref<MandrakeDistanceProgress>({ completed: 0, maximum: 0, complete: false });
 const embeddingProgress = ref<MandrakeProgress>({ completed: 0, maximum: 0, eq: Number.NaN, complete: false });
@@ -256,6 +296,28 @@ const embeddingPercent = computed(() => {
   if (!embeddingProgress.value.maximum) return 0;
   return Math.min(100, Math.round((embeddingProgress.value.completed / embeddingProgress.value.maximum) * 100));
 });
+
+const hdbscanPlotLabels = computed<string[] | null>(() => {
+  const clusterLabels = hdbscanLabels.value;
+  if (!clusterLabels || clusterLabels.length !== sampleNames.value.length) return null;
+  return Array.from(clusterLabels, (label) => label < 0 ? "Noise" : `Cluster ${label}`);
+});
+
+const hasBothLabels = computed(() => labels.value !== null && hdbscanPlotLabels.value !== null);
+
+const activeLabels = computed(() => colourMode.value === "clusters"
+  ? hdbscanPlotLabels.value
+  : labels.value);
+
+const clusterCount = computed(() => {
+  const clusterLabels = hdbscanLabels.value;
+  if (!clusterLabels) return 0;
+  return new Set(Array.from(clusterLabels).filter((label) => label >= 0)).size;
+});
+
+const hdbscanSummary = computed(() => clusterCount.value === 0
+  ? "No HDBSCAN clusters found"
+  : `${clusterCount.value} HDBSCAN cluster${clusterCount.value === 1 ? "" : "s"}`);
 
 watch(mode, (nextMode) => {
   sparsificationValue.value = nextMode === "knn" ? 15 : 0.5;
@@ -285,6 +347,10 @@ function chooseFile(file: File | undefined): void {
   liveEmbedding.value = null;
   sampleNames.value = [];
   labels.value = null;
+  hdbscanLabels.value = null;
+  colourMode.value = "manual";
+  clustering.value = false;
+  clusterError.value = "";
   labelContents.value = null;
   distanceProgress.value = { completed: 0, maximum: 0, complete: false };
   embeddingProgress.value = { completed: 0, maximum: 0, eq: Number.NaN, complete: false };
@@ -371,6 +437,10 @@ function handleUpdate(update: MandrakeUpdate): void {
     embeddingProgress.value = update.progress;
     return;
   }
+  if (update.phase === "clustering") {
+    clustering.value = true;
+    return;
+  }
   liveEmbedding.value = update.embedding;
 }
 
@@ -383,6 +453,7 @@ function settings(): MandrakeSettings {
     repulsionSamples: Number(repulsionSamples.value),
     learningRate: Number(learningRate.value),
     initialExaggeration: initialExaggeration.value,
+    hdbscan: runHdbscan.value,
   };
 }
 
@@ -395,6 +466,10 @@ async function runEmbedding(): Promise<void> {
   liveEmbedding.value = null;
   sampleNames.value = [];
   labels.value = null;
+  hdbscanLabels.value = null;
+  colourMode.value = "manual";
+  clustering.value = false;
+  clusterError.value = "";
   labelContents.value = null;
   distanceProgress.value = { completed: 0, maximum: 0, complete: false };
   embeddingProgress.value = { completed: 0, maximum: Number(maxUpdates.value), eq: Number.NaN, complete: false };
@@ -406,6 +481,10 @@ async function runEmbedding(): Promise<void> {
     result.value = await runner.run(source.value, selectedFile.value, settings(), handleUpdate);
     sampleNames.value = result.value.names;
     liveEmbedding.value = result.value.embedding;
+    hdbscanLabels.value = result.value.hdbscanLabels;
+    clusterError.value = result.value.hdbscanError ?? "";
+    clustering.value = false;
+    colourMode.value = result.value.hdbscanLabels && labels.value === null ? "clusters" : "manual";
   } catch (error) {
     if (error instanceof Error && error.message !== "Mandrake operation cancelled") {
       errorMessage.value = error.message;
@@ -420,8 +499,8 @@ function cancel(): void {
   isRunning.value = false;
 }
 
-function downloadText(filename: string, contents: string): void {
-  const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
+function downloadText(filename: string, contents: string, type = "text/plain;charset=utf-8"): void {
+  const blob = new Blob([contents], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -449,5 +528,24 @@ function downloadEmbedding(): void {
 function downloadNames(): void {
   if (!result.value) return;
   downloadText(`${outputPrefix()}.names.txt`, `${result.value.names.join("\n")}\n`);
+}
+
+function csvEscape(value: string | number): string {
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadClusters(): void {
+  const clusterLabels = hdbscanLabels.value;
+  if (!result.value || !clusterLabels || clusterLabels.length !== result.value.names.length) return;
+  const rows = ["id,hdbscan_cluster__autocolour"];
+  result.value.names.forEach((name, index) => {
+    rows.push(`${csvEscape(name)},${clusterLabels[index]}`);
+  });
+  downloadText(
+    `${outputPrefix()}.embedding_hdbscan_clusters.csv`,
+    `${rows.join("\n")}\n`,
+    "text/csv;charset=utf-8",
+  );
 }
 </script>

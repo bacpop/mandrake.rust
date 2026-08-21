@@ -10,6 +10,7 @@ interface Settings {
   repulsionSamples: number;
   learningRate: number;
   initialExaggeration: boolean;
+  hdbscan: boolean;
 }
 
 interface StartMessage {
@@ -49,6 +50,7 @@ let queue = Promise.resolve();
 let wasmPromise: Promise<MandrakeWasm> | null = null;
 let nextFrameUpdate = 0;
 let frameInterval = 1;
+let runHdbscan = false;
 const MAX_FRAME_INTERVAL = 20_000;
 
 function loadWasm(): Promise<MandrakeWasm> {
@@ -87,6 +89,7 @@ function postFrame(completed: number, maximum: number): void {
 async function handle(message: WorkerMessage): Promise<void> {
   if (message.type === "reset") {
     operation = null;
+    runHdbscan = false;
     self.postMessage({ type: "reset" });
     return;
   }
@@ -94,6 +97,7 @@ async function handle(message: WorkerMessage): Promise<void> {
   if (message.type === "start") {
     const { MandrakeOperation } = await loadWasm();
     const settings = message.settings;
+    runHdbscan = settings.hdbscan;
     operation = message.source === "alignment"
       ? MandrakeOperation.fromAlignmentFile(
           message.file,
@@ -155,6 +159,17 @@ async function handle(message: WorkerMessage): Promise<void> {
     const progress = operation.advance(message.roundBudget);
     if (progress.complete) {
       const embedding = operation.embedding();
+      let clusters: Int32Array | undefined;
+      let hdbscanError: string | undefined;
+      if (runHdbscan) {
+        self.postMessage({ type: "clustering" });
+        try {
+          const wasm = await loadWasm();
+          clusters = wasm.clusterEmbedding(embedding);
+        } catch (error) {
+          hdbscanError = error instanceof Error ? error.message : String(error);
+        }
+      }
       self.postMessage({
         type: "embedding-progress",
         completed: progress.completed,
@@ -169,7 +184,14 @@ async function handle(message: WorkerMessage): Promise<void> {
         eq: progress.eq,
         embedding,
         names: operation.names(),
-      }, { transfer: [embedding.buffer] });
+        clusters,
+        hdbscanError,
+      }, {
+        transfer: [
+          embedding.buffer,
+          ...(clusters ? [clusters.buffer] : []),
+        ],
+      });
       return;
     }
 

@@ -13,6 +13,7 @@ const props = defineProps<{
   embedding: Float64Array;
   names: string[];
   labels?: string[];
+  noiseLabel?: string;
   runKey?: number;
 }>();
 
@@ -35,6 +36,7 @@ function render(): void {
   if (!element || props.embedding.length < 2) return;
 
   const groups = new Map<string, { x: number[]; y: number[]; names: string[] }>();
+  const noise = { x: [] as number[], y: [] as number[], names: [] as string[] };
   const pointCount = Math.floor(props.embedding.length / 2);
   const hasLabels = Boolean(props.labels && props.labels.length === pointCount);
   for (let index = 0; index < pointCount; index += 1) {
@@ -42,13 +44,20 @@ function render(): void {
     const y = props.embedding[index * 2 + 1];
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const label = hasLabels ? (props.labels?.[index] ?? "") : "Samples";
+    const name = props.names[index] ?? `Sample ${index + 1}`;
+    if (props.noiseLabel !== undefined && label === props.noiseLabel) {
+      noise.x.push(x);
+      noise.y.push(y);
+      noise.names.push(name);
+      continue;
+    }
     const group = groups.get(label) ?? { x: [], y: [], names: [] };
     group.x.push(x);
     group.y.push(y);
-    group.names.push(props.names[index] ?? `Sample ${index + 1}`);
+    group.names.push(name);
     groups.set(label, group);
   }
-  if (!groups.size) return;
+  if (!groups.size && !noise.x.length) return;
 
   const labels = Array.from(groups.keys()).sort((left, right) => left.localeCompare(right));
   const traces = labels.map((label, index) => {
@@ -68,6 +77,24 @@ function render(): void {
       },
     };
   });
+  if (noise.x.length) {
+    traces.push({
+      type: "scattergl",
+      mode: "markers",
+      name: props.noiseLabel ?? "Noise",
+      x: [...noise.x],
+      y: [...noise.y],
+      text: [...noise.names],
+      hovertemplate: "<b>%{text}</b><br>%{fullData.name}<extra></extra>",
+      marker: {
+        size: 9,
+        color: "#18212b",
+        opacity: 0.45,
+        line: { color: "#ffffff", width: 1.2 },
+      },
+      showlegend: false,
+    });
+  }
 
   const axis = {
     zeroline: false,
@@ -115,7 +142,7 @@ onMounted(() => {
 });
 
 watch(
-  () => [props.embedding, props.names, props.labels, props.runKey],
+  () => [props.embedding, props.names, props.labels, props.noiseLabel, props.runKey],
   render,
   { deep: false },
 );
