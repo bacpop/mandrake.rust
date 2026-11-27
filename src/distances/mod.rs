@@ -165,7 +165,7 @@ pub(crate) fn validate_distance_options(options: &DistanceOptions) -> Result<()>
     validate_sparsification(options.sparsification)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 pub(crate) fn with_pool<T, F>(threads: usize, operation: F) -> Result<T>
 where
     T: Send,
@@ -178,7 +178,7 @@ where
     Ok(pool.install(operation))
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
 pub(crate) fn with_pool<T, F>(_: usize, operation: F) -> Result<T>
 where
     F: FnOnce() -> T,

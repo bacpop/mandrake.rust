@@ -67,7 +67,7 @@ pub(crate) struct EmbeddingOperationInner {
     eq: f64,
     optimization_started: bool,
     optimization_progress: PhaseProgress,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     pool: rayon::ThreadPool,
 }
 
@@ -87,12 +87,12 @@ impl EmbeddingOperationInner {
         }
         let seed = configured_seed.unwrap_or_else(system_seed);
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         let threads = options.threads;
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(target_family = "wasm")]
         let threads = 1;
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(options.threads)
             .build()
@@ -103,7 +103,7 @@ impl EmbeddingOperationInner {
             "calculating conditional probabilities for {} edges",
             input.distances.len()
         );
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         let probabilities = pool.install(|| {
             conditional_probabilities(
                 &row_edges,
@@ -112,7 +112,7 @@ impl EmbeddingOperationInner {
                 options.quiet,
             )
         })?;
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(target_family = "wasm")]
         let probabilities = conditional_probabilities(
             &row_edges,
             &input.distances,
@@ -124,9 +124,9 @@ impl EmbeddingOperationInner {
         let node_table = AliasTable::new(&input.weights).context("building node sampler")?;
 
         log::info!("initializing embedding for {} nodes", input.n_nodes);
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         let initial = initial_embedding(input.n_nodes, seed, &pool);
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(target_family = "wasm")]
         let initial = initial_embedding(input.n_nodes, seed);
 
         let current_embedding =
@@ -158,7 +158,7 @@ impl EmbeddingOperationInner {
                 options.quiet,
                 "Optimizing",
             ),
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(not(target_family = "wasm"))]
             pool,
         })
     }
@@ -238,13 +238,13 @@ impl EmbeddingOperationInner {
             repulsion_coefficient,
             repulsion_samples: self.repulsion_samples,
         };
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         let (qsum, qcount, _) = {
             let pool = &self.pool;
             let rng_states = &mut self.rng_states;
             pool.install(|| run_updates(rng_states, &context))
         };
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(target_family = "wasm")]
         let (qsum, qcount, _) = run_updates(&mut self.rng_states, &context);
         let n_squared = self.n_nodes as f64 * (self.n_nodes - 1) as f64;
         self.eq = (self.eq * n_squared + qsum) / (n_squared + qcount as f64);
@@ -439,14 +439,14 @@ impl AliasTable {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn initial_embedding(n_nodes: usize, seed: u64, pool: &rayon::ThreadPool) -> Vec<f64> {
     let mut values = vec![0.0; n_nodes * DIMENSIONS];
     pool.install(|| initialise_embedding(&mut values, seed));
     values
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
 fn initial_embedding(n_nodes: usize, seed: u64) -> Vec<f64> {
     let mut values = vec![0.0; n_nodes * DIMENSIONS];
     initialise_embedding(&mut values, seed);
